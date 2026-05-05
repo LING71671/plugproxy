@@ -1,0 +1,22 @@
+{
+  "sources": [
+    {
+      "name": "proxyscrape-http",
+      "type": "raw_text_url",
+      "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text",
+      "protocol_hint": "http",
+      "enabled": true,
+      "timeout": "12s",
+      "body_limit": 2097152
+    },
+    {
+      "name": "proxifly-socks5",
+      "type": "raw_text_url",
+      "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt",
+      "protocol_hint": "socks5",
+      "enabled": true,
+      "timeout": "12s",
+      "body_limit": 2097152
+    }
+  ]
+}

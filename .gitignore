@@ -6,6 +6,7 @@ dist/
 # Local/editor state
 .idea/
 .vscode/
+plugproxy.sources.json
 
 # Logs
 *.log

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LING71671/plugproxy/internal/checker"
+	"github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/fetcher"
 	"github.com/LING71671/plugproxy/internal/pool"
 	"github.com/LING71671/plugproxy/internal/server"
@@ -22,30 +23,49 @@ type App struct {
 }
 
 func New(log *slog.Logger) *App {
+	sources, err := config.LoadSources(config.DefaultPath)
+	if err != nil {
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("load default sources failed", "error", err)
+	}
+	return NewWithSources(log, sources)
+}
+
+func NewWithSources(log *slog.Logger, sources []source.Source) *App {
 	if log == nil {
 		log = slog.Default()
 	}
 
 	return &App{
-		pool: pool.NewMemory(),
-		sources: []source.Source{
-			source.NewStatic("example", []model.Proxy{
-				{Address: "127.0.0.1:8080", Protocol: model.ProtocolHTTP},
-			}),
-		},
-		log: log,
+		pool:    pool.NewMemory(),
+		sources: sources,
+		log:     log,
 	}
 }
 
 func (a *App) Fetch(ctx context.Context) int {
+	return a.FetchWithWorkers(ctx, len(a.sources))
+}
+
+func (a *App) FetchWithWorkers(ctx context.Context, workers int) int {
 	count := 0
-	for _, result := range fetcher.FetchAll(ctx, a.sources) {
+	seen := make(map[string]struct{})
+	for _, result := range fetcher.FetchAllWithWorkers(ctx, a.sources, workers) {
 		if result.Error != nil {
 			a.log.Warn("source fetch failed", "source", result.Source, "error", result.Error)
 			continue
 		}
 
 		for _, proxy := range result.Proxies {
+			if proxy.ID == "" {
+				proxy.ID = string(proxy.Protocol) + "://" + proxy.Address
+			}
+			if _, ok := seen[proxy.ID]; ok {
+				continue
+			}
+			seen[proxy.ID] = struct{}{}
 			a.pool.Add(proxy)
 			count++
 		}

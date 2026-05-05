@@ -111,6 +111,18 @@ plugproxy discover search -query "proxy sources" -ai -ai-provider responses-comp
 discover -> candidates -> validate source -> human review -> source config -> fetch -> check -> pool
 ```
 
+当前主采集链路已经支持 `raw_text_url` 源配置。候选源经过人工确认后，可以写入 `plugproxy.sources.json`：
+
+```json
+{
+  "name": "example-http",
+  "type": "raw_text_url",
+  "url": "https://example.com/http.txt",
+  "protocol_hint": "http",
+  "enabled": true
+}
+```
+
 ## 安全边界
 
 - 不绕过登录、验证码、付费墙。

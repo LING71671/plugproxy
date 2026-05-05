@@ -16,6 +16,7 @@
 - 支持从配置文件加载代理源。
 - 增加代理去重和基础格式归一化。
 - 增加 `discover` 体系，支持 GitHub、Raw URL 和可选 AI 搜索发现候选代理源。
+- 打通默认 Raw/API TXT 源到 `fetch/list/check/run` 主链路。
 
 ## 第三阶段：检测与评分
 

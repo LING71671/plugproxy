@@ -76,11 +76,11 @@ plugproxy 的核心原则是“发现候选源”和“使用可用代理”分�
 
 ```bash
 go run ./cmd/plugproxy version
-go run ./cmd/plugproxy fetch
-go run ./cmd/plugproxy list
-go run ./cmd/plugproxy get
-go run ./cmd/plugproxy check -workers 32 -target https://httpbin.org/ip -timeout 8s
-go run ./cmd/plugproxy run -addr 127.0.0.1:8899
+go run ./cmd/plugproxy fetch -source-workers 32
+go run ./cmd/plugproxy list -source-workers 32
+go run ./cmd/plugproxy get -source-workers 32
+go run ./cmd/plugproxy check -source-workers 32 -workers 128 -target https://httpbin.org/ip -timeout 8s
+go run ./cmd/plugproxy run -source-workers 32 -addr 127.0.0.1:8899
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -97,12 +97,37 @@ GET /proxy?protocol=http
 GET /proxy?strategy=fastest
 ```
 
+## 代理源配置
+
+默认会读取 `plugproxy.sources.json`。如果文件不存在，plugproxy 会启用内置的第一批高优先级 Raw/API TXT 源。
+
+配置示例见 [plugproxy.sources.example.json](plugproxy.sources.example.json)：
+
+```json
+{
+  "sources": [
+    {
+      "name": "proxyscrape-http",
+      "type": "raw_text_url",
+      "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text",
+      "protocol_hint": "http",
+      "enabled": true,
+      "timeout": "12s",
+      "body_limit": 2097152
+    }
+  ]
+}
+```
+
+第一版配置源只支持 `type: "raw_text_url"`，可解析 `ip:port` 和 `protocol://ip:port`。
+
 ## 项目结构
 
 ```text
 cmd/plugproxy/       CLI 入口
 internal/app/        应用编排
 internal/checker/    代理检测
+internal/config/     代理源配置和默认源
 internal/fetcher/    并发代理源采集
 internal/pool/       代理池接口与内存实现
 internal/server/     轻量 HTTP API

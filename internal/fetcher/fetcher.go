@@ -15,17 +15,46 @@ type Result struct {
 }
 
 func FetchAll(ctx context.Context, sources []source.Source) []Result {
+	return FetchAllWithWorkers(ctx, sources, len(sources))
+}
+
+func FetchAllWithWorkers(ctx context.Context, sources []source.Source, workers int) []Result {
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > len(sources) {
+		workers = len(sources)
+	}
 	results := make([]Result, len(sources))
+	if len(sources) == 0 {
+		return results
+	}
+
+	jobs := make(chan int)
 	var wg sync.WaitGroup
 
-	for i, src := range sources {
+	for range workers {
 		wg.Add(1)
-		go func(i int, src source.Source) {
+		go func() {
 			defer wg.Done()
-			proxies, err := src.Fetch(ctx)
-			results[i] = Result{Source: src.Name(), Proxies: proxies, Error: err}
-		}(i, src)
+			for i := range jobs {
+				src := sources[i]
+				proxies, err := src.Fetch(ctx)
+				results[i] = Result{Source: src.Name(), Proxies: proxies, Error: err}
+			}
+		}()
 	}
+
+	go func() {
+		defer close(jobs)
+		for i := range sources {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- i:
+			}
+		}
+	}()
 
 	wg.Wait()
 	return results

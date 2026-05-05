@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LING71671/plugproxy/internal/app"
+	"github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/discover"
 	"github.com/LING71671/plugproxy/internal/pool"
 )
@@ -19,7 +20,6 @@ const version = "0.1.0-dev"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	application := app.New(log)
 
 	if len(os.Args) < 2 {
 		usage()
@@ -32,22 +32,52 @@ func main() {
 	case "version":
 		fmt.Println(version)
 	case "fetch":
-		count := application.Fetch(ctx)
+		fs := flag.NewFlagSet("fetch", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false}))
+		application, err := newApplication(log, *configPath)
+		if err != nil {
+			exitErr(err)
+		}
+		count := application.FetchWithWorkers(ctx, *sourceWorkers)
 		fmt.Printf("fetched %d proxies\n", count)
 	case "check":
 		fs := flag.NewFlagSet("check", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
-		_ = fs.Parse(os.Args[2:])
-		application.Fetch(ctx)
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false, "workers": false, "target": false, "timeout": false}))
+		application, err := newApplication(log, *configPath)
+		if err != nil {
+			exitErr(err)
+		}
+		application.FetchWithWorkers(ctx, *sourceWorkers)
 		healthy := application.Check(ctx, *workers, *target, *timeout)
 		fmt.Printf("healthy %d proxies\n", healthy)
 	case "list":
-		application.Fetch(ctx)
+		fs := flag.NewFlagSet("list", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false}))
+		application, err := newApplication(log, *configPath)
+		if err != nil {
+			exitErr(err)
+		}
+		application.FetchWithWorkers(ctx, *sourceWorkers)
 		writeJSON(application.Pool().List(pool.Filter{}))
 	case "get":
-		application.Fetch(ctx)
+		fs := flag.NewFlagSet("get", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false}))
+		application, err := newApplication(log, *configPath)
+		if err != nil {
+			exitErr(err)
+		}
+		application.FetchWithWorkers(ctx, *sourceWorkers)
 		proxy, ok := application.Pool().Get(pool.StrategyAny, pool.Filter{})
 		if !ok {
 			fmt.Fprintln(os.Stderr, "no proxy available")
@@ -56,14 +86,23 @@ func main() {
 		writeJSON(proxy)
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
 		addr := fs.String("addr", "127.0.0.1:8899", "HTTP API listen address")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
 		skipCheck := fs.Bool("skip-check", true, "skip proxy checking on startup")
-		_ = fs.Parse(os.Args[2:])
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
+			"config": false, "source-workers": false, "addr": false, "workers": false,
+			"target": false, "timeout": false, "skip-check": true,
+		}))
 
-		application.Fetch(ctx)
+		application, err := newApplication(log, *configPath)
+		if err != nil {
+			exitErr(err)
+		}
+		application.FetchWithWorkers(ctx, *sourceWorkers)
 		if !*skipCheck {
 			application.Check(ctx, *workers, *target, *timeout)
 		}
@@ -87,11 +126,11 @@ func usage() {
 
 Usage:
   plugproxy version
-  plugproxy fetch
-  plugproxy check [-workers 32] [-target URL] [-timeout 8s]
-  plugproxy list
-  plugproxy get
-  plugproxy run [-addr 127.0.0.1:8899] [-skip-check=true]
+  plugproxy fetch [-config plugproxy.sources.json] [-source-workers 32]
+  plugproxy check [-config plugproxy.sources.json] [-source-workers 32] [-workers 32] [-target URL] [-timeout 8s]
+  plugproxy list [-config plugproxy.sources.json] [-source-workers 32]
+  plugproxy get [-config plugproxy.sources.json] [-source-workers 32]
+  plugproxy run [-config plugproxy.sources.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE
@@ -102,6 +141,19 @@ func writeJSON(value any) {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	_ = encoder.Encode(value)
+}
+
+func newApplication(log *slog.Logger, configPath string) (*app.App, error) {
+	sources, err := config.LoadSources(configPath)
+	if err != nil {
+		return nil, err
+	}
+	return app.NewWithSources(log, sources), nil
+}
+
+func exitErr(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
 }
 
 func runDiscover(ctx context.Context, args []string) error {
