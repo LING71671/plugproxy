@@ -1,0 +1,12 @@
+# Binaries
+bin/
+dist/
+*.exe
+
+# Local/editor state
+.idea/
+.vscode/
+
+# Logs
+*.log
+
