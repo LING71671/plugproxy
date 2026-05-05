@@ -8,10 +8,11 @@ import (
 )
 
 type Result struct {
-	Proxy   model.Proxy
-	OK      bool
-	Latency time.Duration
-	Error   error
+	Proxy       model.Proxy
+	OK          bool
+	Unsupported bool
+	Latency     time.Duration
+	Error       error
 }
 
 type Checker interface {

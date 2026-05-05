@@ -27,6 +27,12 @@ func (p *MemoryPool) Add(proxy model.Proxy) {
 	if proxy.CreatedAt.IsZero() {
 		proxy.CreatedAt = time.Now()
 	}
+	if proxy.HealthStatus == "" {
+		proxy.HealthStatus = model.HealthUnchecked
+	}
+	if proxy.CheckCount == 0 && proxy.HealthScore == 0 {
+		proxy.HealthScore = 50
+	}
 
 	p.proxies[proxy.ID] = proxy
 }
@@ -37,9 +43,32 @@ func (p *MemoryPool) Get(strategy Strategy, filter Filter) (model.Proxy, bool) {
 		return model.Proxy{}, false
 	}
 
-	if strategy == StrategyFastest {
+	switch strategy {
+	case StrategyFastest:
 		sort.SliceStable(items, func(i, j int) bool {
-			return items[i].Latency < items[j].Latency
+			if healthRank(items[i]) != healthRank(items[j]) {
+				return healthRank(items[i]) > healthRank(items[j])
+			}
+			if items[i].Latency == 0 {
+				return false
+			}
+			if items[j].Latency == 0 {
+				return true
+			}
+			if items[i].Latency != items[j].Latency {
+				return items[i].Latency < items[j].Latency
+			}
+			return items[i].HealthScore > items[j].HealthScore
+		})
+	default:
+		sort.SliceStable(items, func(i, j int) bool {
+			if healthRank(items[i]) != healthRank(items[j]) {
+				return healthRank(items[i]) > healthRank(items[j])
+			}
+			if items[i].HealthScore != items[j].HealthScore {
+				return items[i].HealthScore > items[j].HealthScore
+			}
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
 		})
 	}
 
@@ -66,4 +95,17 @@ func (p *MemoryPool) List(filter Filter) []model.Proxy {
 	})
 
 	return items
+}
+
+func healthRank(proxy model.Proxy) int {
+	switch proxy.Status() {
+	case model.HealthHealthy:
+		return 3
+	case model.HealthDegraded:
+		return 2
+	case model.HealthUnchecked:
+		return 1
+	default:
+		return 0
+	}
 }

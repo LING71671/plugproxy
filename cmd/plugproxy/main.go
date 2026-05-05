@@ -14,6 +14,7 @@ import (
 	"github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/discover"
 	"github.com/LING71671/plugproxy/internal/pool"
+	"github.com/LING71671/plugproxy/pkg/model"
 )
 
 const version = "0.1.0-dev"
@@ -47,16 +48,17 @@ func main() {
 		configPath := fs.String("config", config.DefaultPath, "source config path")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
+		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false, "workers": false, "target": false, "timeout": false}))
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false, "workers": false, "protocol": false, "target": false, "timeout": false}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
 		application.FetchWithWorkers(ctx, *sourceWorkers)
-		healthy := application.Check(ctx, *workers, *target, *timeout)
-		fmt.Printf("healthy %d proxies\n", healthy)
+		stats := application.CheckWithFilter(ctx, *workers, *target, *timeout, pool.Filter{Protocol: model.Protocol(*protocol)})
+		writeJSON(stats)
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
@@ -72,13 +74,16 @@ func main() {
 		fs := flag.NewFlagSet("get", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false}))
+		strategy := fs.String("strategy", string(pool.StrategyAny), "selection strategy: any, fastest")
+		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
+		healthy := fs.Bool("healthy", false, "only return healthy proxies")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false, "strategy": false, "protocol": false, "healthy": true}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
 		application.FetchWithWorkers(ctx, *sourceWorkers)
-		proxy, ok := application.Pool().Get(pool.StrategyAny, pool.Filter{})
+		proxy, ok := application.Pool().Get(pool.Strategy(*strategy), pool.Filter{Protocol: model.Protocol(*protocol), Healthy: *healthy})
 		if !ok {
 			fmt.Fprintln(os.Stderr, "no proxy available")
 			os.Exit(1)
@@ -127,9 +132,9 @@ func usage() {
 Usage:
   plugproxy version
   plugproxy fetch [-config plugproxy.sources.json] [-source-workers 32]
-  plugproxy check [-config plugproxy.sources.json] [-source-workers 32] [-workers 32] [-target URL] [-timeout 8s]
+  plugproxy check [-config plugproxy.sources.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
   plugproxy list [-config plugproxy.sources.json] [-source-workers 32]
-  plugproxy get [-config plugproxy.sources.json] [-source-workers 32]
+  plugproxy get [-config plugproxy.sources.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
   plugproxy run [-config plugproxy.sources.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true]
   plugproxy discover repo owner/name
   plugproxy discover url URL

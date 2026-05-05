@@ -22,6 +22,15 @@ type App struct {
 	log     *slog.Logger
 }
 
+type CheckStats struct {
+	Total       int `json:"total"`
+	Healthy     int `json:"healthy"`
+	Degraded    int `json:"degraded"`
+	Dead        int `json:"dead"`
+	Unsupported int `json:"unsupported"`
+	Failed      int `json:"failed"`
+}
+
 func New(log *slog.Logger) *App {
 	sources, err := config.LoadSources(config.DefaultPath)
 	if err != nil {
@@ -75,11 +84,16 @@ func (a *App) FetchWithWorkers(ctx context.Context, workers int) int {
 }
 
 func (a *App) Check(ctx context.Context, workers int, targetURL string, timeout time.Duration) int {
+	stats := a.CheckWithFilter(ctx, workers, targetURL, timeout, pool.Filter{})
+	return stats.Healthy
+}
+
+func (a *App) CheckWithFilter(ctx context.Context, workers int, targetURL string, timeout time.Duration, filter pool.Filter) CheckStats {
 	if workers <= 0 {
 		workers = 32
 	}
 
-	items := a.pool.List(pool.Filter{})
+	items := a.pool.List(filter)
 	jobs := make(chan model.Proxy)
 	results := make(chan checker.Result)
 	httpChecker := checker.NewHTTP(targetURL, timeout)
@@ -116,21 +130,36 @@ func (a *App) Check(ctx context.Context, workers int, targetURL string, timeout 
 		close(results)
 	}()
 
-	healthy := 0
+	stats := CheckStats{Total: len(items)}
 	for result := range results {
-		proxy := result.Proxy
-		proxy.LastCheckedAt = time.Now()
-		proxy.Latency = result.Latency
-		if result.OK {
-			proxy.SuccessCount++
-			healthy++
-		} else {
-			proxy.FailureCount++
+		errText := ""
+		if result.Error != nil {
+			errText = result.Error.Error()
+		}
+		proxy := model.ApplyCheck(result.Proxy, model.CheckUpdate{
+			OK:          result.OK,
+			Unsupported: result.Unsupported,
+			Latency:     result.Latency,
+			Error:       errText,
+			CheckedAt:   time.Now(),
+		})
+		if result.Unsupported {
+			stats.Unsupported++
+		} else if !result.OK {
+			stats.Failed++
+		}
+		switch proxy.HealthStatus {
+		case model.HealthHealthy:
+			stats.Healthy++
+		case model.HealthDegraded:
+			stats.Degraded++
+		case model.HealthDead:
+			stats.Dead++
 		}
 		a.pool.Add(proxy)
 	}
 
-	return healthy
+	return stats
 }
 
 func (a *App) Pool() pool.Pool {

@@ -25,6 +25,7 @@
 - 支持可配置检测目标。
 - 增加延迟、失败次数、成功率、最后可用时间等评分字段。
 - 增加 `any`、`fastest`、`healthy` 等选择策略。
+- 增加复杂健康评分和 `healthy/degraded/dead/unchecked` 状态分级。
 
 ## 第四阶段：接入能力
 

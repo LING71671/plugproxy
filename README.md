@@ -78,9 +78,9 @@ plugproxy 的核心原则是“发现候选源”和“使用可用代理”分�
 go run ./cmd/plugproxy version
 go run ./cmd/plugproxy fetch -source-workers 32
 go run ./cmd/plugproxy list -source-workers 32
-go run ./cmd/plugproxy get -source-workers 32
-go run ./cmd/plugproxy check -source-workers 32 -workers 128 -target https://httpbin.org/ip -timeout 8s
-go run ./cmd/plugproxy run -source-workers 32 -addr 127.0.0.1:8899
+go run ./cmd/plugproxy get -source-workers 32 -strategy fastest -protocol http
+go run ./cmd/plugproxy check -source-workers 32 -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
+go run ./cmd/plugproxy run -source-workers 32 -addr 127.0.0.1:8899 -skip-check=false
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -95,7 +95,27 @@ GET /proxies
 GET /proxy
 GET /proxy?protocol=http
 GET /proxy?strategy=fastest
+GET /proxy?strategy=fastest&protocol=http&healthy=true
 ```
+
+## 健康评分
+
+`check` 会按协议检测代理并更新内存代理池中的健康状态：
+
+- HTTP/HTTPS：使用标准库 HTTP Transport 检测。
+- SOCKS5：使用 Go 官方扩展包 `golang.org/x/net/proxy` 检测。
+- SOCKS4：第一版明确标记为 unsupported，不参与健康代理判断。
+
+健康字段包括 `health_score`、`health_status`、`check_count`、`consecutive_failures`、`last_success_at`、`last_failure_at` 和 `last_error`。
+
+状态分级：
+
+- `unchecked`：尚未检测。
+- `healthy`：分数较高且最近一次检测成功。
+- `degraded`：可疑或分数中等。
+- `dead`：连续失败或分数过低。
+
+当前健康状态保存在内存中。独立执行一次 `check` 后，结果不会自动带到下一次独立执行的 `get`；需要长期复用健康池时，应使用 `run -skip-check=false` 启动常驻服务，后续再通过 HTTP API 获取代理。
 
 ## 代理源配置
 

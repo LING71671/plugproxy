@@ -40,7 +40,8 @@ go build -o bin/plugproxy ./cmd/plugproxy
 go run ./cmd/plugproxy version
 go run ./cmd/plugproxy fetch
 go run ./cmd/plugproxy list
-go run ./cmd/plugproxy run -addr 127.0.0.1:8899
+go run ./cmd/plugproxy check -source-workers 32 -workers 128 -protocol http
+go run ./cmd/plugproxy run -addr 127.0.0.1:8899 -skip-check=false
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10
 ```
 
