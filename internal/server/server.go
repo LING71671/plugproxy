@@ -10,8 +10,9 @@ import (
 )
 
 type Server struct {
-	pool pool.Pool
-	log  *slog.Logger
+	pool         pool.Pool
+	log          *slog.Logger
+	sourceReport func() any
 }
 
 func New(proxyPool pool.Pool, log *slog.Logger) Server {
@@ -22,9 +23,15 @@ func New(proxyPool pool.Pool, log *slog.Logger) Server {
 	return Server{pool: proxyPool, log: log}
 }
 
+func (s Server) WithSourceReport(report func() any) Server {
+	s.sourceReport = report
+	return s
+}
+
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
+	mux.HandleFunc("GET /sources", s.sources)
 	mux.HandleFunc("GET /proxies", s.listProxies)
 	mux.HandleFunc("GET /proxy", s.getProxy)
 	return mux
@@ -36,6 +43,14 @@ func (s Server) health(w http.ResponseWriter, _ *http.Request) {
 
 func (s Server) listProxies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.pool.List(parseFilter(r)))
+}
+
+func (s Server) sources(w http.ResponseWriter, _ *http.Request) {
+	if s.sourceReport == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"sources": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.sourceReport())
 }
 
 func (s Server) getProxy(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LING71671/plugproxy/internal/app"
+	"github.com/LING71671/plugproxy/internal/cache"
 	"github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/discover"
 	"github.com/LING71671/plugproxy/internal/pool"
@@ -35,54 +36,82 @@ func main() {
 	case "fetch":
 		fs := flag.NewFlagSet("fetch", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false}))
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
-		count := application.FetchWithWorkers(ctx, *sourceWorkers)
-		fmt.Printf("fetched %d proxies\n", count)
+		report := application.FetchWithOptions(ctx, app.FetchOptions{
+			Workers:       *sourceWorkers,
+			CachePath:     *cachePath,
+			CacheFallback: *cacheFallback,
+			CacheWrite:    true,
+		})
+		writeJSON(report)
 	case "check":
 		fs := flag.NewFlagSet("check", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
 		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false, "workers": false, "protocol": false, "target": false, "timeout": false}))
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "workers": false, "protocol": false, "target": false, "timeout": false}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
-		application.FetchWithWorkers(ctx, *sourceWorkers)
+		application.FetchWithOptions(ctx, app.FetchOptions{
+			Workers:       *sourceWorkers,
+			CachePath:     *cachePath,
+			CacheFallback: *cacheFallback,
+			CacheWrite:    true,
+		})
 		stats := application.CheckWithFilter(ctx, *workers, *target, *timeout, pool.Filter{Protocol: model.Protocol(*protocol)})
 		writeJSON(stats)
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false}))
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
-		application.FetchWithWorkers(ctx, *sourceWorkers)
+		application.FetchWithOptions(ctx, app.FetchOptions{
+			Workers:       *sourceWorkers,
+			CachePath:     *cachePath,
+			CacheFallback: *cacheFallback,
+			CacheWrite:    true,
+		})
 		writeJSON(application.Pool().List(pool.Filter{}))
 	case "get":
 		fs := flag.NewFlagSet("get", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
 		strategy := fs.String("strategy", string(pool.StrategyAny), "selection strategy: any, fastest")
 		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
 		healthy := fs.Bool("healthy", false, "only return healthy proxies")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "source-workers": false, "strategy": false, "protocol": false, "healthy": true}))
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "strategy": false, "protocol": false, "healthy": true}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
-		application.FetchWithWorkers(ctx, *sourceWorkers)
+		application.FetchWithOptions(ctx, app.FetchOptions{
+			Workers:       *sourceWorkers,
+			CachePath:     *cachePath,
+			CacheFallback: *cacheFallback,
+			CacheWrite:    true,
+		})
 		proxy, ok := application.Pool().Get(pool.Strategy(*strategy), pool.Filter{Protocol: model.Protocol(*protocol), Healthy: *healthy})
 		if !ok {
 			fmt.Fprintln(os.Stderr, "no proxy available")
@@ -92,6 +121,8 @@ func main() {
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
 		addr := fs.String("addr", "127.0.0.1:8899", "HTTP API listen address")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
@@ -99,7 +130,7 @@ func main() {
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
 		skipCheck := fs.Bool("skip-check", true, "skip proxy checking on startup")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
-			"config": false, "source-workers": false, "addr": false, "workers": false,
+			"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "addr": false, "workers": false,
 			"target": false, "timeout": false, "skip-check": true,
 		}))
 
@@ -107,7 +138,12 @@ func main() {
 		if err != nil {
 			exitErr(err)
 		}
-		application.FetchWithWorkers(ctx, *sourceWorkers)
+		application.FetchWithOptions(ctx, app.FetchOptions{
+			Workers:       *sourceWorkers,
+			CachePath:     *cachePath,
+			CacheFallback: *cacheFallback,
+			CacheWrite:    true,
+		})
 		if !*skipCheck {
 			application.Check(ctx, *workers, *target, *timeout)
 		}
@@ -131,11 +167,11 @@ func usage() {
 
 Usage:
   plugproxy version
-  plugproxy fetch [-config plugproxy.sources.json] [-source-workers 32]
-  plugproxy check [-config plugproxy.sources.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
-  plugproxy list [-config plugproxy.sources.json] [-source-workers 32]
-  plugproxy get [-config plugproxy.sources.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
-  plugproxy run [-config plugproxy.sources.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true]
+  plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
+  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
+  plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
+  plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE

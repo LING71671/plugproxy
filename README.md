@@ -76,11 +76,11 @@ plugproxy 的核心原则是“发现候选源”和“使用可用代理”分�
 
 ```bash
 go run ./cmd/plugproxy version
-go run ./cmd/plugproxy fetch -source-workers 32
-go run ./cmd/plugproxy list -source-workers 32
-go run ./cmd/plugproxy get -source-workers 32 -strategy fastest -protocol http
-go run ./cmd/plugproxy check -source-workers 32 -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
-go run ./cmd/plugproxy run -source-workers 32 -addr 127.0.0.1:8899 -skip-check=false
+go run ./cmd/plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
+go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
+go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http
+go run ./cmd/plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
+go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -91,6 +91,7 @@ go run ./cmd/plugproxy discover validate candidates.json -workers 128
 
 ```text
 GET /health
+GET /sources
 GET /proxies
 GET /proxy
 GET /proxy?protocol=http
@@ -141,11 +142,18 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 第一版配置源只支持 `type: "raw_text_url"`，可解析 `ip:port` 和 `protocol://ip:port`。
 
+## 采集缓存
+
+`fetch/list/get/check/run` 默认会把成功采集到的代理写入 `.plugproxy.cache.json`。当一轮采集所有源都失败时，会自动回退读取缓存，避免免费源短暂超时导致代理池为空。
+
+`fetch` 会输出本轮源级采集报告，包括成功源、失败源、去重数量、缓存是否被复用和每个源耗时。HTTP API 的 `GET /sources` 会返回最近一次采集报告。
+
 ## 项目结构
 
 ```text
 cmd/plugproxy/       CLI 入口
 internal/app/        应用编排
+internal/cache/      代理缓存
 internal/checker/    代理检测
 internal/config/     代理源配置和默认源
 internal/fetcher/    并发代理源采集

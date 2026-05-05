@@ -3,15 +3,17 @@ package fetcher
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/LING71671/plugproxy/internal/source"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
 type Result struct {
-	Source  string
-	Proxies []model.Proxy
-	Error   error
+	Source   string
+	Proxies  []model.Proxy
+	Error    error
+	Duration time.Duration
 }
 
 func FetchAll(ctx context.Context, sources []source.Source) []Result {
@@ -39,8 +41,9 @@ func FetchAllWithWorkers(ctx context.Context, sources []source.Source, workers i
 			defer wg.Done()
 			for i := range jobs {
 				src := sources[i]
+				start := time.Now()
 				proxies, err := src.Fetch(ctx)
-				results[i] = Result{Source: src.Name(), Proxies: proxies, Error: err}
+				results[i] = Result{Source: src.Name(), Proxies: proxies, Error: err, Duration: time.Since(start)}
 			}
 		}()
 	}
