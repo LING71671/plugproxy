@@ -78,9 +78,9 @@ plugproxy 的核心原则是“发现候选源”和“使用可用代理”分�
 go run ./cmd/plugproxy version
 go run ./cmd/plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
-go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http
+go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
 go run ./cmd/plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
-go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false
+go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -92,6 +92,8 @@ go run ./cmd/plugproxy discover validate candidates.json -workers 128
 ```text
 GET /health
 GET /sources
+GET /refresh
+POST /refresh
 GET /proxies
 GET /proxy
 GET /proxy?protocol=http
@@ -116,7 +118,7 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 - `degraded`：可疑或分数中等。
 - `dead`：连续失败或分数过低。
 
-当前健康状态保存在内存中。独立执行一次 `check` 后，结果不会自动带到下一次独立执行的 `get`；需要长期复用健康池时，应使用 `run -skip-check=false` 启动常驻服务，后续再通过 HTTP API 获取代理。
+健康状态会写入 `.plugproxy.cache.json`，独立执行一次 `check` 后，下一次 `get/list/run` 会复用历史健康评分。
 
 ## 代理源配置
 
@@ -147,6 +149,19 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 `fetch/list/get/check/run` 默认会把成功采集到的代理写入 `.plugproxy.cache.json`。当一轮采集所有源都失败时，会自动回退读取缓存，避免免费源短暂超时导致代理池为空。
 
 `fetch` 会输出本轮源级采集报告，包括成功源、失败源、去重数量、缓存是否被复用和每个源耗时。HTTP API 的 `GET /sources` 会返回最近一次采集报告。
+
+缓存也会保留检测后的健康字段。缓存中的代理与新采集代理按 `protocol://address` 合并；新代理首次出现时初始化为 `unchecked` 和 50 分，已存在代理再次出现时保留历史健康评分。
+
+## 自动刷新
+
+`run` 默认开启后台刷新，每 5 分钟执行一次 `fetch -> check -> save cache`。可用 `-refresh=false` 关闭，或用 `-refresh-interval` 调整周期。
+
+刷新任务串行执行，上一轮未结束时会跳过新一轮。HTTP API 提供：
+
+```text
+POST /refresh  异步触发一次刷新
+GET /refresh   查看最近一次刷新状态
+```
 
 ## 项目结构
 

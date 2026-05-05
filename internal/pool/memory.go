@@ -21,6 +21,14 @@ func (p *MemoryPool) Add(proxy model.Proxy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	proxy = normalize(proxy)
+	if existing, ok := p.proxies[proxy.ID]; ok {
+		proxy = mergeProxy(existing, proxy)
+	}
+	p.proxies[proxy.ID] = proxy
+}
+
+func normalize(proxy model.Proxy) model.Proxy {
 	if proxy.ID == "" {
 		proxy.ID = string(proxy.Protocol) + "://" + proxy.Address
 	}
@@ -33,8 +41,29 @@ func (p *MemoryPool) Add(proxy model.Proxy) {
 	if proxy.CheckCount == 0 && proxy.HealthScore == 0 {
 		proxy.HealthScore = 50
 	}
+	return proxy
+}
 
-	p.proxies[proxy.ID] = proxy
+func mergeProxy(existing model.Proxy, incoming model.Proxy) model.Proxy {
+	if incoming.CheckCount > 0 || incoming.LastCheckedAt.After(existing.LastCheckedAt) {
+		return incoming
+	}
+	if existing.CheckCount == 0 {
+		return incoming
+	}
+
+	incoming.Latency = existing.Latency
+	incoming.HealthScore = existing.HealthScore
+	incoming.HealthStatus = existing.HealthStatus
+	incoming.SuccessCount = existing.SuccessCount
+	incoming.FailureCount = existing.FailureCount
+	incoming.CheckCount = existing.CheckCount
+	incoming.ConsecutiveFailures = existing.ConsecutiveFailures
+	incoming.LastCheckedAt = existing.LastCheckedAt
+	incoming.LastSuccessAt = existing.LastSuccessAt
+	incoming.LastFailureAt = existing.LastFailureAt
+	incoming.LastError = existing.LastError
+	return incoming
 }
 
 func (p *MemoryPool) Get(strategy Strategy, filter Filter) (model.Proxy, bool) {

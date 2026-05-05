@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/LING71671/plugproxy/internal/cache"
 	"github.com/LING71671/plugproxy/internal/pool"
@@ -23,6 +24,26 @@ func (s failingSource) Name() string {
 
 func (s failingSource) Fetch(context.Context) ([]model.Proxy, error) {
 	return nil, errors.New("boom")
+}
+
+type blockingSource struct {
+	name    string
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s blockingSource) Name() string {
+	return s.name
+}
+
+func (s blockingSource) Fetch(ctx context.Context) ([]model.Proxy, error) {
+	close(s.started)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+		return []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}, nil
+	}
 }
 
 func TestFetchWithOptionsWritesReportAndCache(t *testing.T) {
@@ -90,5 +111,100 @@ func TestFetchWithOptionsFallsBackToCache(t *testing.T) {
 	}
 	if len(application.Pool().List(pool.Filter{})) != 1 {
 		t.Fatal("expected cached proxy in pool")
+	}
+}
+
+func TestFetchWithOptionsPreservesCachedHealth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	checkedAt := time.Now().Add(-time.Minute).UTC()
+	if err := cache.Save(path, []model.Proxy{{
+		ID:            "http://127.0.0.1:8080",
+		Address:       "127.0.0.1:8080",
+		Protocol:      model.ProtocolHTTP,
+		HealthStatus:  model.HealthHealthy,
+		HealthScore:   90,
+		CheckCount:    3,
+		LastCheckedAt: checkedAt,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	application := NewWithSources(slog.Default(), []source.Source{
+		source.NewStatic("fresh", []model.Proxy{{ID: "http://127.0.0.1:8080", Address: "127.0.0.1:8080", Protocol: model.ProtocolHTTP}}),
+	})
+	application.FetchWithOptions(context.Background(), FetchOptions{
+		Workers:       1,
+		CachePath:     path,
+		CacheFallback: true,
+		CacheWrite:    true,
+	})
+
+	items := application.Pool().List(pool.Filter{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 proxy, got %d", len(items))
+	}
+	if items[0].HealthStatus != model.HealthHealthy || items[0].HealthScore != 90 || items[0].CheckCount != 3 {
+		t.Fatalf("expected cached health to be preserved, got %#v", items[0])
+	}
+}
+
+func TestCheckWithOptionsWritesCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	application := NewWithSources(slog.Default(), nil)
+	application.Pool().Add(model.Proxy{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4})
+
+	stats := application.CheckWithOptions(context.Background(), CheckOptions{
+		Workers:    1,
+		Filter:     pool.Filter{Protocol: model.ProtocolSOCKS4},
+		CachePath:  path,
+		CacheWrite: true,
+	})
+	if stats.Unsupported != 1 {
+		t.Fatalf("expected 1 unsupported proxy, got %d", stats.Unsupported)
+	}
+
+	loaded, err := cache.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 cached proxy, got %d", len(loaded))
+	}
+	if loaded[0].CheckCount != 1 || loaded[0].LastError == "" {
+		t.Fatalf("expected checked health fields, got %#v", loaded[0])
+	}
+}
+
+func TestTriggerRefreshSkipsWhenAlreadyRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	application := NewWithSources(slog.Default(), []source.Source{blockingSource{name: "block", started: started, release: release}})
+	options := RefreshOptions{
+		Fetch: FetchOptions{Workers: 1, CachePath: filepath.Join(t.TempDir(), "cache.json"), CacheWrite: false},
+		Check: CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}},
+	}
+
+	first := application.TriggerRefresh(context.Background(), options)
+	if !first.Running {
+		t.Fatalf("expected first refresh to be running")
+	}
+	<-started
+	second := application.TriggerRefresh(context.Background(), options)
+	if !second.Running || second.SkippedAt.IsZero() {
+		t.Fatalf("expected second refresh to be skipped while running, got %#v", second)
+	}
+
+	close(release)
+	deadline := time.After(2 * time.Second)
+	for {
+		status := application.RefreshStatus()
+		if status.Status == "completed" {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not complete, last status %#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }

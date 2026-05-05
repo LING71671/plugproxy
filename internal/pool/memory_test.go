@@ -51,3 +51,34 @@ func TestMemoryPoolFastestPrefersHealthyAndLatency(t *testing.T) {
 		t.Fatalf("expected fastest healthy proxy, got %s", proxy.Address)
 	}
 }
+
+func TestMemoryPoolPreservesHealthWhenFetchedAgain(t *testing.T) {
+	p := NewMemory()
+	checkedAt := time.Now().Add(-time.Minute)
+	p.Add(model.Proxy{
+		ID:            "http://a:1",
+		Address:       "a:1",
+		Protocol:      model.ProtocolHTTP,
+		HealthStatus:  model.HealthHealthy,
+		HealthScore:   90,
+		CheckCount:    2,
+		LastCheckedAt: checkedAt,
+		Source:        "cache",
+	})
+
+	p.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, Source: "fresh"})
+
+	items := p.List(Filter{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 proxy, got %d", len(items))
+	}
+	if items[0].Source != "fresh" {
+		t.Fatalf("expected source refresh, got %s", items[0].Source)
+	}
+	if items[0].HealthStatus != model.HealthHealthy || items[0].HealthScore != 90 {
+		t.Fatalf("expected health to be preserved, got %s/%d", items[0].HealthStatus, items[0].HealthScore)
+	}
+	if !items[0].LastCheckedAt.Equal(checkedAt) {
+		t.Fatalf("expected last checked to be preserved")
+	}
+}

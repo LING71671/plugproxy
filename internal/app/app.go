@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -23,6 +25,7 @@ type App struct {
 	log             *slog.Logger
 	reportMu        sync.RWMutex
 	lastFetchReport FetchReport
+	refresh         refreshState
 }
 
 type FetchOptions struct {
@@ -30,6 +33,15 @@ type FetchOptions struct {
 	CachePath     string
 	CacheFallback bool
 	CacheWrite    bool
+}
+
+type CheckOptions struct {
+	Workers    int
+	TargetURL  string
+	Timeout    time.Duration
+	Filter     pool.Filter
+	CachePath  string
+	CacheWrite bool
 }
 
 type FetchReport struct {
@@ -113,6 +125,19 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 		CachePath:    options.CachePath,
 		Sources:      make([]SourceFetchReport, 0, len(a.sources)),
 	}
+	if options.CacheFallback || options.CacheWrite {
+		proxies, err := cache.Load(options.CachePath)
+		if err == nil {
+			report.CacheCount = len(proxies)
+			for _, proxy := range proxies {
+				a.pool.Add(proxy)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			report.CacheError = err.Error()
+			a.log.Warn("proxy cache preload failed", "path", options.CachePath, "error", err)
+		}
+	}
+
 	seen := make(map[string]struct{})
 	for _, result := range fetcher.FetchAllWithWorkers(ctx, a.sources, options.Workers) {
 		sourceReport := SourceFetchReport{
@@ -176,6 +201,19 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 func (a *App) Check(ctx context.Context, workers int, targetURL string, timeout time.Duration) int {
 	stats := a.CheckWithFilter(ctx, workers, targetURL, timeout, pool.Filter{})
 	return stats.Healthy
+}
+
+func (a *App) CheckWithOptions(ctx context.Context, options CheckOptions) CheckStats {
+	stats := a.CheckWithFilter(ctx, options.Workers, options.TargetURL, options.Timeout, options.Filter)
+	if options.CacheWrite {
+		if options.CachePath == "" {
+			options.CachePath = cache.DefaultPath
+		}
+		if err := cache.Save(options.CachePath, a.pool.List(pool.Filter{})); err != nil {
+			a.log.Warn("proxy cache write failed", "path", options.CachePath, "error", err)
+		}
+	}
+	return stats
 }
 
 func (a *App) CheckWithFilter(ctx context.Context, workers int, targetURL string, timeout time.Duration, filter pool.Filter) CheckStats {
@@ -257,8 +295,16 @@ func (a *App) Pool() pool.Pool {
 }
 
 func (a *App) Serve(addr string) error {
+	return a.ServeWithRefresh(addr, RefreshOptions{})
+}
+
+func (a *App) ServeWithRefresh(addr string, refreshOptions RefreshOptions) error {
 	srv := server.New(a.pool, a.log).WithSourceReport(func() any {
 		return a.LastFetchReport()
+	}).WithRefresh(func(ctx context.Context) any {
+		return a.TriggerRefresh(ctx, refreshOptions)
+	}, func() any {
+		return a.RefreshStatus()
 	})
 	a.log.Info("api server listening", "addr", addr)
 	return http.ListenAndServe(addr, srv.Handler())

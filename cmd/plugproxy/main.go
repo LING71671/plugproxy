@@ -72,7 +72,14 @@ func main() {
 			CacheFallback: *cacheFallback,
 			CacheWrite:    true,
 		})
-		stats := application.CheckWithFilter(ctx, *workers, *target, *timeout, pool.Filter{Protocol: model.Protocol(*protocol)})
+		stats := application.CheckWithOptions(ctx, app.CheckOptions{
+			Workers:    *workers,
+			TargetURL:  *target,
+			Timeout:    *timeout,
+			Filter:     pool.Filter{Protocol: model.Protocol(*protocol)},
+			CachePath:  *cachePath,
+			CacheWrite: true,
+		})
 		writeJSON(stats)
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
@@ -129,9 +136,11 @@ func main() {
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
 		skipCheck := fs.Bool("skip-check", true, "skip proxy checking on startup")
+		refresh := fs.Bool("refresh", true, "enable background fetch and check refresh")
+		refreshInterval := fs.Duration("refresh-interval", 5*time.Minute, "background refresh interval")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
 			"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "addr": false, "workers": false,
-			"target": false, "timeout": false, "skip-check": true,
+			"target": false, "timeout": false, "skip-check": true, "refresh": true, "refresh-interval": false,
 		}))
 
 		application, err := newApplication(log, *configPath)
@@ -145,9 +154,33 @@ func main() {
 			CacheWrite:    true,
 		})
 		if !*skipCheck {
-			application.Check(ctx, *workers, *target, *timeout)
+			application.CheckWithOptions(ctx, app.CheckOptions{
+				Workers:    *workers,
+				TargetURL:  *target,
+				Timeout:    *timeout,
+				CachePath:  *cachePath,
+				CacheWrite: true,
+			})
 		}
-		if err := application.Serve(*addr); err != nil {
+		refreshOptions := app.RefreshOptions{
+			Fetch: app.FetchOptions{
+				Workers:       *sourceWorkers,
+				CachePath:     *cachePath,
+				CacheFallback: *cacheFallback,
+				CacheWrite:    true,
+			},
+			Check: app.CheckOptions{
+				Workers:    *workers,
+				TargetURL:  *target,
+				Timeout:    *timeout,
+				CachePath:  *cachePath,
+				CacheWrite: true,
+			},
+		}
+		if *refresh {
+			application.StartAutoRefresh(ctx, *refreshInterval, refreshOptions)
+		}
+		if err := application.ServeWithRefresh(*addr, refreshOptions); err != nil {
 			log.Error("server stopped", "error", err)
 			os.Exit(1)
 		}
@@ -171,7 +204,7 @@ Usage:
   plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
-  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE
