@@ -26,10 +26,10 @@
 - 查看认证状态使用 `gh auth status`。
 - 创建仓库、查看仓库、创建 issue、创建 PR 和查看 Actions 等优先使用 `gh`。
 - 当前仓库使用 GitHub Actions 作为 CI/CD。
-- 非临时改动默认先创建 issue，确认任务边界后再创建 PR。
-- PR 应关联对应 issue，优先使用 `Closes #issue_number` 让合并后自动关闭 issue。
-- PR 检查通过且没有阻塞问题时启用自动合并。
-- PR 合并后删除功能分支。
+- V1.0 之前以快速推进为主，可以直接提交并推送到 `main`。
+- V1.0 之后再严格执行 issue -> branch -> PR -> checks -> merge 的流程。
+- V1.0 之后 PR 应关联对应 issue，优先使用 `Closes #issue_number` 让合并后自动关闭 issue。
+- V1.0 之后 PR 检查通过且没有阻塞问题时启用自动合并，并在合并后删除功能分支。
 - 提交信息使用简洁英文，例如 `chore: initialize project`。
 - 未经明确要求，不改写已有 Git 历史。
 
