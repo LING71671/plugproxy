@@ -37,6 +37,7 @@
 - 提供本地代理获取命令，例如 `plugproxy get`。
 - 增加后台自动刷新和异步 `POST /refresh` 触发接口。
 - 增加 HTTP Client SDK、嵌入式 SDK、`/stats` 和 `plugproxy stats`。
+- 增加 v0.1.0 tag release、跨平台二进制和 checksums。
 
 ## 第五阶段：管理与可视化
 

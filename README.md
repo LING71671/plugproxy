@@ -2,7 +2,7 @@
 
 plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池管理和接入工具。
 
-> 当前状态：早期设计与项目初始化阶段。
+> 当前状态：v0.1.0 可用预览版。
 
 ## 目标
 
@@ -12,6 +12,31 @@ plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池
 - 支持 GitHub、Web、Raw URL 和可选 AI 搜索发现候选代理源。
 - 以 worker pool 支持高并发抓取、验证和检测。
 - 保持轻量：单个 Go 二进制，无强制外部服务依赖。
+
+## 安装
+
+从 GitHub Releases 下载适合系统的压缩包，解压后把 `plugproxy` 或 `plugproxy.exe` 放到 `PATH` 中。
+
+```bash
+plugproxy version
+```
+
+也可以直接从源码运行：
+
+```bash
+go run ./cmd/plugproxy version
+```
+
+## 快速开始
+
+```bash
+plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
+plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
+plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
+plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m
+```
+
+Go 项目接入见 [Go SDK 接入](docs/sdk.md)。
 
 ## 架构
 
@@ -202,6 +227,7 @@ docs/                项目文档
 
 - [项目约定](docs/project-conventions.md)
 - [GitHub Actions CI/CD](docs/ci-cd.md)
+- [发布流程](docs/release.md)
 - [代理源清单](docs/proxy-sources.md)
 - [代理源发现爬虫设计](docs/source-discovery.md)
 - [Go SDK 接入](docs/sdk.md)

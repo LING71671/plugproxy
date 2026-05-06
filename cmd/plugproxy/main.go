@@ -18,7 +18,11 @@ import (
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
-const version = "0.1.0-dev"
+var (
+	version = "0.1.0-dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -32,7 +36,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "version":
-		fmt.Println(version)
+		fmt.Printf("%s commit=%s date=%s\n", version, commit, date)
 	case "fetch":
 		fs := flag.NewFlagSet("fetch", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")

@@ -26,6 +26,7 @@ plugproxy 是一个 Go 语言轻量代理采集、检测、代理池管理和接
 - 创建、查看、推送仓库和 PR 时优先使用 `gh`。
 - 当前仓库使用 GitHub Actions 作为 CI/CD。
 - V1.0 之前以快速推进为主，可以直接提交并推送到 `main`。
+- 新版本发布必须创建 annotated tag，例如 `git tag -a v0.1.0 -m "v0.1.0"`。
 - V1.0 之后再严格执行：先创建 issue，再基于 issue 创建分支和 PR。
 - V1.0 之后 PR 描述需要关联 issue，例如 `Closes #123`。
 - V1.0 之后 PR 检查没有问题后启用自动合并，并在合并后删除已合并分支。

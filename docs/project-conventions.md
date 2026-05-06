@@ -27,6 +27,7 @@
 - 创建仓库、查看仓库、创建 issue、创建 PR 和查看 Actions 等优先使用 `gh`。
 - 当前仓库使用 GitHub Actions 作为 CI/CD。
 - V1.0 之前以快速推进为主，可以直接提交并推送到 `main`。
+- 新版本发布必须创建 annotated tag，例如 `git tag -a v0.1.0 -m "v0.1.0"`。
 - V1.0 之后再严格执行 issue -> branch -> PR -> checks -> merge 的流程。
 - V1.0 之后 PR 应关联对应 issue，优先使用 `Closes #issue_number` 让合并后自动关闭 issue。
 - V1.0 之后 PR 检查通过且没有阻塞问题时启用自动合并，并在合并后删除功能分支。
