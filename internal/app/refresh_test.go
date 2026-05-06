@@ -202,3 +202,48 @@ func TestRefreshStatusReportsRunningPhaseAndProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelRefreshSkipsWhenNotRunning(t *testing.T) {
+	application := NewWithSources(slog.Default(), nil)
+	status := application.CancelRefresh()
+	if status.Status != "skipped" || status.SkippedReason != "not_running" {
+		t.Fatalf("unexpected cancel status %#v", status)
+	}
+}
+
+func TestCancelRefreshStopsRunningRefresh(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	application := NewWithSources(slog.Default(), []source.Source{
+		blockingSource{name: "block", started: started, release: release},
+	})
+	status := application.TriggerRefresh(context.Background(), RefreshOptions{
+		Fetch: FetchOptions{Workers: 1, CachePath: filepath.Join(t.TempDir(), "cache.json"), CacheWrite: false},
+		Check: CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}},
+	})
+	if !status.Running {
+		t.Fatalf("expected running refresh, got %#v", status)
+	}
+	<-started
+	cancelStatus := application.CancelRefresh()
+	if cancelStatus.Status != "cancelling" || !cancelStatus.Cancelled {
+		t.Fatalf("expected cancelling status, got %#v", cancelStatus)
+	}
+
+	close(release)
+	deadline := time.After(2 * time.Second)
+	for {
+		current := application.RefreshStatus()
+		if current.Status == "cancelled" {
+			if !current.Cancelled {
+				t.Fatalf("expected cancelled flag, got %#v", current)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not cancel, last status %#v", current)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}

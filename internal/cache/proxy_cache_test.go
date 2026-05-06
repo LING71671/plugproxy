@@ -32,6 +32,42 @@ func TestSaveAndLoadProxyCache(t *testing.T) {
 	}
 }
 
+func TestSaveProxyCacheDoesNotLeaveTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+	if err := Save(path, []model.Proxy{{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP}}); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, ".cache.json.*.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected no temp files, got %#v", matches)
+	}
+}
+
+func TestSaveProxyCacheReplaceFailureKeepsExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	targetDir := filepath.Join(dir, "cache.json")
+	if err := os.Mkdir(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Save(targetDir, []model.Proxy{{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP}})
+	if err == nil {
+		t.Fatal("expected replace failure")
+	}
+	info, statErr := os.Stat(targetDir)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !info.IsDir() {
+		t.Fatal("expected existing directory to remain")
+	}
+}
+
 func TestLoadOldProxyCacheWithoutSeenFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cache.json")
 	data := []byte(`{"version":1,"proxies":[{"id":"http://127.0.0.1:8080","address":"127.0.0.1:8080","protocol":"http"}]}`)

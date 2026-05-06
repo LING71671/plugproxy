@@ -57,6 +57,7 @@ type refreshState struct {
 	mu      sync.Mutex
 	running bool
 	status  RefreshStatus
+	cancel  context.CancelFunc
 }
 
 func (a *App) TriggerRefresh(ctx context.Context, options RefreshOptions) RefreshStatus {
@@ -64,6 +65,28 @@ func (a *App) TriggerRefresh(ctx context.Context, options RefreshOptions) Refres
 	if !started {
 		return status
 	}
+	return status
+}
+
+func (a *App) CancelRefresh() RefreshStatus {
+	now := time.Now()
+	a.refresh.mu.Lock()
+	defer a.refresh.mu.Unlock()
+	status := a.refresh.status
+	if !a.refresh.running || a.refresh.cancel == nil {
+		status.Status = "skipped"
+		status.Running = false
+		status.SkippedAt = now
+		status.SkippedReason = "not_running"
+		a.refresh.status = status
+		return status
+	}
+	status.Status = "cancelling"
+	status.Running = true
+	status.Phase = "cancelling"
+	status.Cancelled = true
+	a.refresh.status = status
+	a.refresh.cancel()
 	return status
 }
 
@@ -108,8 +131,10 @@ func (a *App) StartAutoRefresh(ctx context.Context, interval time.Duration, opti
 func (a *App) startRefresh(ctx context.Context, options RefreshOptions, reason string) (RefreshStatus, bool) {
 	now := time.Now()
 	options.Policy = defaultRefreshPolicy(options.Policy.BaseInterval, options.Policy)
+	refreshCtx, cancel := context.WithCancel(ctx)
 	a.refresh.mu.Lock()
 	if a.refresh.running {
+		cancel()
 		status := a.refresh.status
 		status.Status = "skipped"
 		status.Running = false
@@ -134,10 +159,11 @@ func (a *App) startRefresh(ctx context.Context, options RefreshOptions, reason s
 	status.LastReason = reason
 	status.Policy = options.Policy
 	a.refresh.running = true
+	a.refresh.cancel = cancel
 	a.refresh.status = status
 	a.refresh.mu.Unlock()
 
-	go a.runRefresh(ctx, options)
+	go a.runRefresh(refreshCtx, options)
 	return status, true
 }
 
@@ -157,8 +183,8 @@ func (a *App) runRefresh(ctx context.Context, options RefreshOptions) {
 	status.Progress = pipelineProgressFromReport(pipeline)
 	status.FinishedAt = time.Now()
 	if ctx.Err() != nil {
-		status.Status = "failed"
-		status.Phase = "failed"
+		status.Status = "cancelled"
+		status.Phase = "cancelled"
 		status.Cancelled = true
 		status.Error = ctx.Err().Error()
 	}
@@ -168,6 +194,7 @@ func (a *App) runRefresh(ctx context.Context, options RefreshOptions) {
 	status.LastReason = a.refresh.status.LastReason
 	status.NextAt = a.refresh.status.NextAt
 	a.refresh.running = false
+	a.refresh.cancel = nil
 	a.refresh.status = status
 	a.log.Info("refresh completed",
 		"status", status.Status,

@@ -59,6 +59,7 @@ type CheckOptions struct {
 	DeadBackoffMax   time.Duration
 	SkipUnsupported  bool
 	ProtocolFair     bool
+	Transport        checker.TransportOptions
 }
 
 type FetchReport struct {
@@ -300,7 +301,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 	checkJobs := make(chan model.Proxy, max(1, checkOptions.Workers*4))
 	checkResults := make(chan checker.Result, max(1, checkOptions.Workers*4))
 	var checkWG sync.WaitGroup
-	httpChecker := checker.NewHTTP(checkOptions.TargetURL, checkOptions.Timeout)
+	httpChecker := checker.NewHTTPWithOptions(checkOptions.TargetURL, checkOptions.Timeout, checkOptions.Transport)
 	for range checkOptions.Workers {
 		checkWG.Add(1)
 		go func() {
@@ -491,7 +492,7 @@ func (a *App) CheckWithOptions(ctx context.Context, options CheckOptions) CheckS
 
 	items := a.pool.List(options.Filter)
 	schedule := scheduler.ScheduleChecks(items, schedulerOptions(options, options.MaxChecks))
-	stats := a.checkItems(ctx, schedule.Selected, options.Workers, options.TargetURL, options.Timeout)
+	stats := a.checkItems(ctx, schedule.Selected, options.Workers, options.TargetURL, options.Timeout, options.Transport)
 	mergeScheduleStats(&stats, schedule.Stats, false)
 	if options.CacheWrite {
 		if options.CachePath == "" {
@@ -540,10 +541,10 @@ func (a *App) CheckWithFilter(ctx context.Context, workers int, targetURL string
 	return a.CheckWithOptions(ctx, CheckOptions{Workers: workers, TargetURL: targetURL, Timeout: timeout, Filter: filter})
 }
 
-func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, targetURL string, timeout time.Duration) CheckStats {
+func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, targetURL string, timeout time.Duration, transport checker.TransportOptions) CheckStats {
 	jobs := make(chan model.Proxy)
 	results := make(chan checker.Result)
-	httpChecker := checker.NewHTTP(targetURL, timeout)
+	httpChecker := checker.NewHTTPWithOptions(targetURL, timeout, transport)
 
 	var wg sync.WaitGroup
 	for range workers {
@@ -770,6 +771,8 @@ func (a *App) Handler(refreshOptions RefreshOptions) http.Handler {
 		return a.TriggerRefresh(ctx, refreshOptions)
 	}, func() any {
 		return a.RefreshStatus()
+	}, func() any {
+		return a.CancelRefresh()
 	}).Handler()
 }
 

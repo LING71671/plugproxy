@@ -78,6 +78,8 @@ func TestClientStatsAndRefresh(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(model.ProxyStats{Total: 2})
 		case "/refresh":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "running"})
+		case "/refresh/cancel":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "cancelling"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -99,6 +101,14 @@ func TestClientStatsAndRefresh(t *testing.T) {
 	}
 	if refresh["status"] != "running" {
 		t.Fatalf("unexpected refresh status %#v", refresh)
+	}
+
+	cancelled, err := c.CancelRefresh(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled["status"] != "cancelling" {
+		t.Fatalf("unexpected cancel status %#v", cancelled)
 	}
 }
 

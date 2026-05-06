@@ -46,6 +46,7 @@ c.Stats(ctx)
 c.Sources(ctx)
 c.TriggerRefresh(ctx)
 c.RefreshStatus(ctx)
+c.CancelRefresh(ctx)
 ```
 
 ## 嵌入式 SDK
@@ -93,4 +94,4 @@ func main() {
 }
 ```
 
-第一版嵌入式 SDK 只暴露启动、关闭、获取代理、列出代理和刷新。更细的源管理、检测策略和管理面板接口后续再逐步开放。
+嵌入式 SDK 暴露启动、关闭、获取代理、列出代理、触发刷新和取消刷新。更细的源管理、检测策略和管理面板接口后续再逐步开放。

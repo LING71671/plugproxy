@@ -2,7 +2,7 @@
 
 plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池管理和接入工具。
 
-> 当前状态：v0.2.1 可用预览版。
+> 当前状态：v0.3.0 可用预览版。
 
 ## 目标
 
@@ -37,9 +37,9 @@ go run ./cmd/plugproxy doctor
 plugproxy init
 plugproxy doctor
 plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json
-plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 300 -check-profile smart
+plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -connect-timeout 5s -max-checks 300 -check-profile smart
 plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
-plugproxy run -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 300
+plugproxy run -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -shutdown-timeout 10s -log-level info -max-checks 300
 ```
 
 Go 项目接入见 [Go SDK 接入](docs/sdk.md)。
@@ -113,8 +113,8 @@ go run ./cmd/plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plug
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
 go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
-go run ./cmd/plugproxy check -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 300 -check-profile smart
-go run ./cmd/plugproxy run -source-workers 32 -per-host-workers 4 -source-cooldown 15m -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 300 -check-profile smart
+go run ./cmd/plugproxy check -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -connect-timeout 5s -response-header-timeout 5s -max-checks 300 -check-profile smart
+go run ./cmd/plugproxy run -source-workers 32 -per-host-workers 4 -source-cooldown 15m -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -shutdown-timeout 10s -log-level info -max-checks 300 -check-profile smart
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -156,7 +156,7 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 健康状态会写入 `.plugproxy.cache.json`，独立执行一次 `check` 后，下一次 `get/list/run` 会复用历史健康评分。
 
-`check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议公平抽样。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。
+`check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议公平抽样。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。高并发检测还可以通过 `-connect-timeout`、`-tls-handshake-timeout`、`-response-header-timeout`、`-idle-conn-timeout`、`-max-idle-conns` 和 `-max-idle-conns-per-host` 控制 HTTP Transport 行为。
 
 ## 代理源配置
 
@@ -200,14 +200,17 @@ JSON/API 字段映射可用 `json.items_path`、`json.proxy_field`、`json.host_
 
 `run` 默认开启动态刷新控制器。`-refresh-interval` 是基础间隔，不是写死节拍；控制器会根据健康代理水位、unchecked 积压、上一轮失败情况和抖动计算下一次刷新。刷新会在源返回后尽快去重、调度检测并入池，不必等待所有源都抓取完成；最终仍只写一次 cache。可用 `-refresh=false` 关闭，或用 `-refresh-min-interval`、`-refresh-max-interval`、`-min-healthy` 等参数调整策略。
 
-`GET /refresh` 会显示当前 `phase`、进度、跳过原因、下一次刷新时间和最近一次 pipeline 报告；重复 `POST /refresh` 不会重入正在运行的 refresh。
+`GET /refresh` 会显示当前 `phase`、进度、跳过原因、下一次刷新时间和最近一次 pipeline 报告；重复 `POST /refresh` 不会重入正在运行的 refresh。`POST /refresh/cancel` 可以取消当前 refresh，未运行时会返回 `skipped/not_running`。
 
 刷新任务串行执行，上一轮未结束时会跳过新一轮。HTTP API 提供：
 
 ```text
 POST /refresh  异步触发一次刷新
 GET /refresh   查看最近一次刷新状态
+POST /refresh/cancel  取消当前刷新
 ```
+
+`run` 支持 `-shutdown-timeout` 做优雅关闭，收到 `Ctrl+C` 或 SIGTERM 时会取消后台刷新并等待 HTTP server 退出。日志可用 `-log-level` 和 `-log-format` 调整，日志写入 stderr，命令 JSON 输出仍写 stdout。
 
 ## Go SDK
 

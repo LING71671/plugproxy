@@ -77,4 +77,8 @@ func TestServiceRefreshRequiresStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	_, err = svc.CancelRefresh(context.Background())
+	if err == nil {
+		t.Fatal("expected cancel error")
+	}
 }

@@ -41,6 +41,7 @@
 - 增加 HTTP Client SDK、嵌入式 SDK、`/stats` 和 `plugproxy stats`。
 - 增加 v0.2.0 tag release、跨平台二进制和 checksums。
 - 增加 v0.2.1 稳定性版本，收口 smart check scheduler、source 冷却、host 限流、错误分类、refresh 可观测和 discover 配置导出。
+- 增加 v0.3.0 工程基础版本，收口 atomic cache write、HTTP Transport 配置、refresh cancel、优雅关闭和日志配置。
 
 ## 第五阶段：管理与可视化
 
@@ -56,6 +57,6 @@
 - 已增强 refresh 状态，暴露阶段、进度、耗时和取消状态。
 - 已对源抓取和检测错误分类，区分超时、连接错误、协议不支持和响应异常。
 - 已支持 `discover validate -write-sources` 导出待人工确认的源配置。
-- 后续继续推进 source 半开试探、全局连接预算、HTTP Transport 参数集中配置和 atomic cache write。
+- 后续继续推进 source 半开试探、全局连接预算、SOCKS4 真检测、metrics 和 sources 管理命令。
 
 详细设计见 [并发能力设计备忘](concurrency.md)。

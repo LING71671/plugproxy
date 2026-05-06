@@ -3,17 +3,22 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/LING71671/plugproxy/internal/app"
 	"github.com/LING71671/plugproxy/internal/cache"
+	"github.com/LING71671/plugproxy/internal/checker"
 	"github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/discover"
 	"github.com/LING71671/plugproxy/internal/doctor"
@@ -24,7 +29,7 @@ import (
 )
 
 var (
-	version = "0.2.1"
+	version = "0.3.0"
 	commit  = "unknown"
 	date    = "unknown"
 )
@@ -124,12 +129,20 @@ func main() {
 		deadBackoffMax := fs.Duration("dead-backoff-max", 72*time.Hour, "maximum smart profile dead proxy backoff")
 		protocolFair := fs.Bool("protocol-fair", false, "distribute limited checks across protocols")
 		skipUnsupported := fs.Bool("skip-unsupported", false, "skip protocols that the checker cannot support")
+		connectTimeout := fs.Duration("connect-timeout", 5*time.Second, "proxy connection timeout")
+		tlsHandshakeTimeout := fs.Duration("tls-handshake-timeout", 5*time.Second, "TLS handshake timeout")
+		responseHeaderTimeout := fs.Duration("response-header-timeout", 5*time.Second, "response header timeout")
+		idleConnTimeout := fs.Duration("idle-conn-timeout", 90*time.Second, "idle connection timeout")
+		maxIdleConns := fs.Int("max-idle-conns", 256, "maximum idle connections")
+		maxIdleConnsPerHost := fs.Int("max-idle-conns-per-host", 32, "maximum idle connections per host")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
 			"config": false, "cache": false, "cache-fallback": true, "source-workers": false,
 			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
 			"workers": false, "protocol": false, "target": false, "timeout": false, "max-checks": false, "check-ttl": false,
 			"check-profile": false, "healthy-check-ttl": false, "degraded-check-ttl": false, "dead-check-ttl": false,
 			"dead-backoff-max": false, "protocol-fair": true, "skip-unsupported": true,
+			"connect-timeout": false, "tls-handshake-timeout": false, "response-header-timeout": false,
+			"idle-conn-timeout": false, "max-idle-conns": false, "max-idle-conns-per-host": false,
 		}))
 		if schedulerProfile(*checkProfile) == scheduler.ProfileSmart {
 			if !flagWasSet(fs, "protocol-fair") {
@@ -168,6 +181,14 @@ func main() {
 			DeadBackoffMax:   *deadBackoffMax,
 			ProtocolFair:     *protocolFair,
 			SkipUnsupported:  *skipUnsupported,
+			Transport: checker.TransportOptions{
+				ConnectTimeout:        *connectTimeout,
+				TLSHandshakeTimeout:   *tlsHandshakeTimeout,
+				ResponseHeaderTimeout: *responseHeaderTimeout,
+				IdleConnTimeout:       *idleConnTimeout,
+				MaxIdleConns:          *maxIdleConns,
+				MaxIdleConnsPerHost:   *maxIdleConnsPerHost,
+			},
 		})
 		writeJSON(stats)
 	case "list":
@@ -273,6 +294,15 @@ func main() {
 		refreshFailureBackoff := fs.Float64("refresh-failure-backoff", 2, "multiply refresh delay after failed refresh")
 		sourceFailureThreshold := fs.Int("source-failure-threshold", 3, "consecutive source failures before cooldown")
 		sourceCooldown := fs.Duration("source-cooldown", 15*time.Minute, "source cooldown after repeated failures")
+		connectTimeout := fs.Duration("connect-timeout", 5*time.Second, "proxy connection timeout")
+		tlsHandshakeTimeout := fs.Duration("tls-handshake-timeout", 5*time.Second, "TLS handshake timeout")
+		responseHeaderTimeout := fs.Duration("response-header-timeout", 5*time.Second, "response header timeout")
+		idleConnTimeout := fs.Duration("idle-conn-timeout", 90*time.Second, "idle connection timeout")
+		maxIdleConns := fs.Int("max-idle-conns", 256, "maximum idle connections")
+		maxIdleConnsPerHost := fs.Int("max-idle-conns-per-host", 32, "maximum idle connections per host")
+		shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
+		logLevel := fs.String("log-level", "info", "log level: debug, info, warn, error")
+		logFormat := fs.String("log-format", "text", "log format: text or json")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
 			"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "addr": false, "workers": false,
 			"target": false, "timeout": false, "max-checks": false, "check-ttl": false, "skip-check": true, "refresh": true, "refresh-interval": false,
@@ -281,7 +311,13 @@ func main() {
 			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
 			"check-profile": false, "healthy-check-ttl": false, "degraded-check-ttl": false, "dead-check-ttl": false,
 			"dead-backoff-max": false, "protocol-fair": true, "skip-unsupported": true,
+			"connect-timeout": false, "tls-handshake-timeout": false, "response-header-timeout": false,
+			"idle-conn-timeout": false, "max-idle-conns": false, "max-idle-conns-per-host": false,
+			"shutdown-timeout": false, "log-level": false, "log-format": false,
 		}))
+		log = newLogger(*logLevel, *logFormat)
+		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
 
 		application, err := newApplication(log, *configPath)
 		if err != nil {
@@ -311,6 +347,14 @@ func main() {
 			DeadBackoffMax:   *deadBackoffMax,
 			ProtocolFair:     *protocolFair,
 			SkipUnsupported:  *skipUnsupported,
+			Transport: checker.TransportOptions{
+				ConnectTimeout:        *connectTimeout,
+				TLSHandshakeTimeout:   *tlsHandshakeTimeout,
+				ResponseHeaderTimeout: *responseHeaderTimeout,
+				IdleConnTimeout:       *idleConnTimeout,
+				MaxIdleConns:          *maxIdleConns,
+				MaxIdleConnsPerHost:   *maxIdleConnsPerHost,
+			},
 		}
 		if *skipCheck {
 			application.FetchWithOptions(ctx, fetchOptions)
@@ -335,9 +379,31 @@ func main() {
 		if *refresh {
 			application.StartAutoRefresh(ctx, *refreshInterval, refreshOptions)
 		}
-		if err := application.ServeWithRefresh(*addr, refreshOptions); err != nil {
-			log.Error("server stopped", "error", err)
-			os.Exit(1)
+		server := &http.Server{Addr: *addr, Handler: application.Handler(refreshOptions)}
+		errCh := make(chan error, 1)
+		go func() {
+			log.Info("api server listening", "addr", *addr)
+			errCh <- server.ListenAndServe()
+		}()
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("server stopped", "error", err)
+				os.Exit(1)
+			}
+		case <-ctx.Done():
+			log.Info("shutdown requested")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				log.Error("server shutdown failed", "error", err)
+				os.Exit(1)
+			}
+			if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("server stopped", "error", err)
+				os.Exit(1)
+			}
+			log.Info("shutdown completed")
 		}
 	case "discover":
 		if err := runDiscover(ctx, os.Args[2:]); err != nil {
@@ -358,11 +424,11 @@ Usage:
   plugproxy init [-config plugproxy.sources.json] [-force]
   plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
   plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m]
-  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-profile full]
+  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-profile full] [-connect-timeout 5s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
   plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
-  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-profile smart]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-profile smart] [-shutdown-timeout 10s] [-log-level info] [-log-format text]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE [-write-sources plugproxy.sources.candidates.json]
@@ -400,6 +466,27 @@ func writeInitialConfig(path string, force bool) error {
 func exitErr(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+func newLogger(level string, format string) *slog.Logger {
+	options := &slog.HandlerOptions{Level: slogLevel(level)}
+	if strings.EqualFold(format, "json") {
+		return slog.New(slog.NewJSONHandler(os.Stderr, options))
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, options))
+}
+
+func slogLevel(value string) slog.Level {
+	switch strings.ToLower(value) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func schedulerProfile(value string) scheduler.CheckProfile {

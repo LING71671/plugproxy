@@ -126,6 +126,14 @@ func (c *Client) RefreshStatus(ctx context.Context) (map[string]any, error) {
 	return value, nil
 }
 
+func (c *Client) CancelRefresh(ctx context.Context) (map[string]any, error) {
+	var value map[string]any
+	if err := c.doJSON(ctx, http.MethodPost, "/refresh/cancel", nil, nil, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 func listValues(options ListOptions) url.Values {
 	values := url.Values{}
 	if options.Protocol != "" {

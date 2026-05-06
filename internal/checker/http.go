@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/LING71671/plugproxy/internal/errtype"
@@ -15,9 +16,23 @@ import (
 type HTTPChecker struct {
 	TargetURL string
 	Timeout   time.Duration
+	Transport TransportOptions
+}
+
+type TransportOptions struct {
+	ConnectTimeout        time.Duration
+	TLSHandshakeTimeout   time.Duration
+	ResponseHeaderTimeout time.Duration
+	IdleConnTimeout       time.Duration
+	MaxIdleConns          int
+	MaxIdleConnsPerHost   int
 }
 
 func NewHTTP(targetURL string, timeout time.Duration) HTTPChecker {
+	return NewHTTPWithOptions(targetURL, timeout, TransportOptions{})
+}
+
+func NewHTTPWithOptions(targetURL string, timeout time.Duration, transport TransportOptions) HTTPChecker {
 	if targetURL == "" {
 		targetURL = "https://httpbin.org/ip"
 	}
@@ -25,7 +40,29 @@ func NewHTTP(targetURL string, timeout time.Duration) HTTPChecker {
 		timeout = 8 * time.Second
 	}
 
-	return HTTPChecker{TargetURL: targetURL, Timeout: timeout}
+	return HTTPChecker{TargetURL: targetURL, Timeout: timeout, Transport: transport.WithDefaults()}
+}
+
+func (o TransportOptions) WithDefaults() TransportOptions {
+	if o.ConnectTimeout <= 0 {
+		o.ConnectTimeout = 5 * time.Second
+	}
+	if o.TLSHandshakeTimeout <= 0 {
+		o.TLSHandshakeTimeout = 5 * time.Second
+	}
+	if o.ResponseHeaderTimeout <= 0 {
+		o.ResponseHeaderTimeout = 5 * time.Second
+	}
+	if o.IdleConnTimeout <= 0 {
+		o.IdleConnTimeout = 90 * time.Second
+	}
+	if o.MaxIdleConns <= 0 {
+		o.MaxIdleConns = 256
+	}
+	if o.MaxIdleConnsPerHost <= 0 {
+		o.MaxIdleConnsPerHost = 32
+	}
+	return o
 }
 
 func (c HTTPChecker) Check(ctx context.Context, proxy model.Proxy) Result {
@@ -50,10 +87,8 @@ func (c HTTPChecker) checkHTTPProxy(ctx context.Context, proxy model.Proxy) Resu
 	}
 
 	client := &http.Client{
-		Timeout: c.Timeout,
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
+		Timeout:   c.Timeout,
+		Transport: c.newTransport(proxyURL),
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.TargetURL, nil)
@@ -78,18 +113,14 @@ func (c HTTPChecker) checkHTTPProxy(ctx context.Context, proxy model.Proxy) Resu
 }
 
 func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Result {
-	dialer, err := xproxy.SOCKS5("tcp", proxy.Address, nil, xproxy.Direct)
+	dialer, err := xproxy.SOCKS5("tcp", proxy.Address, nil, netDialer{timeout: c.Transport.ConnectTimeout})
 	if err != nil {
 		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ConnectionError}
 	}
 
 	client := &http.Client{
-		Timeout: c.Timeout,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				return dialWithContext(ctx, dialer, network, address)
-			},
-		},
+		Timeout:   c.Timeout,
+		Transport: c.newSOCKSTransport(dialer),
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.TargetURL, nil)
@@ -111,6 +142,42 @@ func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Re
 		return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.ResponseError}
 	}
 	return Result{Proxy: proxy, OK: true, Latency: latency}
+}
+
+func (c HTTPChecker) newTransport(proxyURL *url.URL) *http.Transport {
+	options := c.Transport.WithDefaults()
+	dialer := &net.Dialer{Timeout: options.ConnectTimeout}
+	return &http.Transport{
+		Proxy:                 http.ProxyURL(proxyURL),
+		DialContext:           dialer.DialContext,
+		TLSHandshakeTimeout:   options.TLSHandshakeTimeout,
+		ResponseHeaderTimeout: options.ResponseHeaderTimeout,
+		IdleConnTimeout:       options.IdleConnTimeout,
+		MaxIdleConns:          options.MaxIdleConns,
+		MaxIdleConnsPerHost:   options.MaxIdleConnsPerHost,
+	}
+}
+
+func (c HTTPChecker) newSOCKSTransport(dialer xproxy.Dialer) *http.Transport {
+	options := c.Transport.WithDefaults()
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialWithContext(ctx, dialer, network, address)
+		},
+		TLSHandshakeTimeout:   options.TLSHandshakeTimeout,
+		ResponseHeaderTimeout: options.ResponseHeaderTimeout,
+		IdleConnTimeout:       options.IdleConnTimeout,
+		MaxIdleConns:          options.MaxIdleConns,
+		MaxIdleConnsPerHost:   options.MaxIdleConnsPerHost,
+	}
+}
+
+type netDialer struct {
+	timeout time.Duration
+}
+
+func (d netDialer) Dial(network string, address string) (net.Conn, error) {
+	return net.DialTimeout(network, address, d.timeout)
 }
 
 func dialWithContext(ctx context.Context, dialer xproxy.Dialer, network, address string) (net.Conn, error) {

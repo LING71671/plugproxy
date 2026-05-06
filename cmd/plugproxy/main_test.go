@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,16 +22,23 @@ func TestReorderFlagArgsSupportsNewRunFlags(t *testing.T) {
 		"-refresh=true",
 		"-source-cooldown", "1m",
 		"-per-host-workers", "2",
+		"-connect-timeout", "3s",
+		"-shutdown-timeout", "5s",
+		"-log-level", "debug",
 		"-check-profile", "smart",
 		"-protocol-fair=true",
 		"-skip-check=false",
 	}, map[string]bool{
 		"refresh": true, "source-cooldown": false, "per-host-workers": false,
+		"connect-timeout": false, "shutdown-timeout": false, "log-level": false,
 		"check-profile": false, "protocol-fair": true, "skip-check": true,
 	})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-source-cooldown 1m") ||
 		!strings.Contains(joined, "-per-host-workers 2") ||
+		!strings.Contains(joined, "-connect-timeout 3s") ||
+		!strings.Contains(joined, "-shutdown-timeout 5s") ||
+		!strings.Contains(joined, "-log-level debug") ||
 		!strings.Contains(joined, "-check-profile smart") ||
 		!strings.Contains(joined, "-protocol-fair=true") {
 		t.Fatalf("new flags were not preserved: %#v", args)
@@ -54,6 +62,15 @@ func TestFlagWasSet(t *testing.T) {
 	}
 	if !flagWasSet(fs, "skip-unsupported") || *value {
 		t.Fatalf("expected explicit false flag to be detected")
+	}
+}
+
+func TestSlogLevelParser(t *testing.T) {
+	if slogLevel("debug") != slog.LevelDebug {
+		t.Fatal("expected debug level")
+	}
+	if slogLevel("bad") != slog.LevelInfo {
+		t.Fatal("expected invalid level to fall back to info")
 	}
 }
 

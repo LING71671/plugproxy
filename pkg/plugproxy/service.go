@@ -10,6 +10,7 @@ import (
 
 	"github.com/LING71671/plugproxy/internal/app"
 	"github.com/LING71671/plugproxy/internal/cache"
+	"github.com/LING71671/plugproxy/internal/checker"
 	internalconfig "github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/pool"
 	"github.com/LING71671/plugproxy/internal/scheduler"
@@ -18,18 +19,24 @@ import (
 )
 
 type Config struct {
-	Addr            string
-	ConfigPath      string
-	CachePath       string
-	CacheFallback   bool
-	SourceWorkers   int
-	CheckWorkers    int
-	TargetURL       string
-	CheckTimeout    time.Duration
-	SkipCheck       bool
-	Refresh         bool
-	RefreshInterval time.Duration
-	Logger          *slog.Logger
+	Addr                  string
+	ConfigPath            string
+	CachePath             string
+	CacheFallback         bool
+	SourceWorkers         int
+	CheckWorkers          int
+	TargetURL             string
+	CheckTimeout          time.Duration
+	ConnectTimeout        time.Duration
+	TLSHandshakeTimeout   time.Duration
+	ResponseHeaderTimeout time.Duration
+	IdleConnTimeout       time.Duration
+	MaxIdleConns          int
+	MaxIdleConnsPerHost   int
+	SkipCheck             bool
+	Refresh               bool
+	RefreshInterval       time.Duration
+	Logger                *slog.Logger
 }
 
 type Service struct {
@@ -130,6 +137,13 @@ func (s *Service) Refresh(ctx context.Context) (map[string]any, error) {
 	return s.client.TriggerRefresh(ctx)
 }
 
+func (s *Service) CancelRefresh(ctx context.Context) (map[string]any, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("plugproxy service is not started")
+	}
+	return s.client.CancelRefresh(ctx)
+}
+
 func (s *Service) refreshOptions() app.RefreshOptions {
 	return app.RefreshOptions{
 		Fetch: app.FetchOptions{
@@ -148,6 +162,14 @@ func (s *Service) refreshOptions() app.RefreshOptions {
 			Profile:         scheduler.ProfileSmart,
 			SkipUnsupported: true,
 			ProtocolFair:    true,
+			Transport: checker.TransportOptions{
+				ConnectTimeout:        s.config.ConnectTimeout,
+				TLSHandshakeTimeout:   s.config.TLSHandshakeTimeout,
+				ResponseHeaderTimeout: s.config.ResponseHeaderTimeout,
+				IdleConnTimeout:       s.config.IdleConnTimeout,
+				MaxIdleConns:          s.config.MaxIdleConns,
+				MaxIdleConnsPerHost:   s.config.MaxIdleConnsPerHost,
+			},
 		},
 	}
 }

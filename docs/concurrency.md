@@ -20,7 +20,7 @@ plugproxy 的并发能力不只追求更大的 worker 数，而是追求在免�
 - `run` 后台刷新串行执行，避免多轮 refresh 重入，并暴露 `phase`、`progress` 和跳过原因。
 - 源请求已有 timeout、body_limit 和 context。
 - 采集失败会被源级隔离，所有源失败时可以回退缓存。
-- v0.2.1 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress 和 discover write-sources。
+- v0.3.0 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress、discover write-sources、atomic cache write、transport 配置和 graceful shutdown。
 
 ## 总体思路
 
@@ -145,13 +145,22 @@ plugproxy run -workers 128 -max-checks 300 -check-profile smart
 - 连接超时、TLS 握手超时、响应头超时：由 Transport 控制。
 - 空闲连接回收：避免长期运行服务积累连接。
 
-HTTP/HTTPS 检测可继续使用标准库 `http.Transport`，后续考虑配置：
+HTTP/HTTPS 检测继续使用标准库 `http.Transport`，当前已支持配置：
 
 - `MaxIdleConns`
 - `MaxIdleConnsPerHost`
 - `IdleConnTimeout`
 - `TLSHandshakeTimeout`
 - `ResponseHeaderTimeout`
+
+默认值：
+
+- `connect-timeout`: 5s
+- `tls-handshake-timeout`: 5s
+- `response-header-timeout`: 5s
+- `idle-conn-timeout`: 90s
+- `max-idle-conns`: 256
+- `max-idle-conns-per-host`: 32
 
 ## 代理池与锁竞争
 
@@ -170,7 +179,7 @@ HTTP/HTTPS 检测可继续使用标准库 `http.Transport`，后续考虑配置�
 
 可做事项：
 
-- cache 写入使用临时文件加 rename，避免中途失败留下坏文件。
+- cache 写入已使用同目录临时文件加原子替换，避免中途失败留下坏文件。
 - 大缓存写入只在状态有变化时执行。
 - refresh 中 fetch/check 完成后统一写一次。
 - 后续可增加轻量索引字段，例如 `last_seen_at`、`seen_count`。
@@ -185,7 +194,7 @@ HTTP/HTTPS 检测可继续使用标准库 `http.Transport`，后续考虑配置�
 - refresh status 增加阶段：`fetching`、`checking`、`saving`、`idle`。
 - 增加当前进度：已处理源数量、已检测代理数量、总任务数。
 - `POST /refresh` 返回是否已排队、是否因运行中被跳过。
-- 支持取消当前 refresh，但需要清晰定义半成品是否写缓存。
+- `POST /refresh/cancel` 支持取消当前 refresh，未运行时返回 `skipped/not_running`。
 - 自动刷新只检测新增和过期代理，避免每 5 分钟全量检测。
 
 动态刷新调控的输入信号：
@@ -290,6 +299,9 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 - `check ttl`: 30m
 - `max checks`: 0，表示不限制
 - `source cooldown`: 15m
+- `connect timeout`: 5s
+- `response header timeout`: 5s
+- `shutdown timeout`: 10s
 
 ## 分阶段实施
 
@@ -302,12 +314,15 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 - 已增强 refresh/status 阶段、进度、取消和跳过原因。
 - 已增加 source 冷却、host 级并发限制和错误分类报告。
 - 已增强 doctor/source report 源级耗时与错误汇总。
+- 已增加 HTTP Transport 参数集中配置。
+- 已增加 atomic cache write。
+- 已增加 `run` signal graceful shutdown、`shutdown-timeout`、`log-level` 和 `log-format`。
 
 ### P1：稳定高并发
 
-- HTTP Transport 参数集中配置。
-- cache 写入改为临时文件加 rename。
 - source 级熔断半开试探和更细的错误退避策略。
+- 全局连接预算和检测 token bucket。
+- refresh 取消后的阶段恢复和部分结果策略继续细化。
 
 ### P2：调度优化
 

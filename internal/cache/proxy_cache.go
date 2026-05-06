@@ -55,5 +55,40 @@ func Save(path string, proxies []model.Proxy) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	return writeFileAtomic(path, data, 0o600)
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	file, err := os.CreateTemp(dir, "."+base+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := file.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if err := file.Chmod(perm); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	_ = file.Sync()
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	if err := replaceFile(tempPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }

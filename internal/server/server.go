@@ -12,11 +12,12 @@ import (
 )
 
 type Server struct {
-	pool         pool.Pool
-	log          *slog.Logger
-	sourceReport func() any
-	refresh      func(context.Context) any
-	refreshState func() any
+	pool          pool.Pool
+	log           *slog.Logger
+	sourceReport  func() any
+	refresh       func(context.Context) any
+	refreshState  func() any
+	refreshCancel func() any
 }
 
 func New(proxyPool pool.Pool, log *slog.Logger) Server {
@@ -32,9 +33,12 @@ func (s Server) WithSourceReport(report func() any) Server {
 	return s
 }
 
-func (s Server) WithRefresh(refresh func(context.Context) any, state func() any) Server {
+func (s Server) WithRefresh(refresh func(context.Context) any, state func() any, cancel ...func() any) Server {
 	s.refresh = refresh
 	s.refreshState = state
+	if len(cancel) > 0 {
+		s.refreshCancel = cancel[0]
+	}
 	return s
 }
 
@@ -44,10 +48,19 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sources", s.sources)
 	mux.HandleFunc("GET /refresh", s.getRefresh)
 	mux.HandleFunc("POST /refresh", s.postRefresh)
+	mux.HandleFunc("POST /refresh/cancel", s.cancelRefresh)
 	mux.HandleFunc("GET /stats", s.stats)
 	mux.HandleFunc("GET /proxies", s.listProxies)
 	mux.HandleFunc("GET /proxy", s.getProxy)
 	return mux
+}
+
+func (s Server) cancelRefresh(w http.ResponseWriter, _ *http.Request) {
+	if s.refreshCancel == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "refresh cancel is not configured"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, s.refreshCancel())
 }
 
 func (s Server) health(w http.ResponseWriter, _ *http.Request) {

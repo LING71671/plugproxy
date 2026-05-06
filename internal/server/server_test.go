@@ -14,11 +14,15 @@ import (
 
 func TestRefreshEndpoints(t *testing.T) {
 	triggered := false
+	cancelled := false
 	srv := New(pool.NewMemory(), slog.Default()).WithRefresh(func(context.Context) any {
 		triggered = true
 		return map[string]any{"status": "running", "running": true}
 	}, func() any {
 		return map[string]any{"status": "idle", "running": false}
+	}, func() any {
+		cancelled = true
+		return map[string]any{"status": "cancelling", "running": true}
 	})
 
 	server := httptest.NewServer(srv.Handler())
@@ -47,6 +51,18 @@ func TestRefreshEndpoints(t *testing.T) {
 	}
 	if !triggered {
 		t.Fatal("expected refresh trigger")
+	}
+
+	cancelResp, err := http.Post(server.URL+"/refresh/cancel", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancelResp.Body.Close()
+	if cancelResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", cancelResp.StatusCode)
+	}
+	if !cancelled {
+		t.Fatal("expected refresh cancel")
 	}
 }
 
