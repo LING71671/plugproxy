@@ -35,6 +35,7 @@
 - 提供 Go SDK。
 - 提供 CLI JSON 输出，方便脚本接入。
 - 提供本地代理获取命令，例如 `plugproxy get`。
+- 增加 `plugproxy init` 和 `plugproxy doctor`，降低上手和排错成本。
 - 增加后台自动刷新和异步 `POST /refresh` 触发接口。
 - 增加 HTTP Client SDK、嵌入式 SDK、`/stats` 和 `plugproxy stats`。
 - 增加 v0.1.0 tag release、跨平台二进制和 checksums。

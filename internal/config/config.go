@@ -56,6 +56,17 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+func Save(path string, cfg Config) error {
+	if path == "" {
+		path = DefaultPath
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
 func BuildSources(cfg Config) ([]source.Source, error) {
 	var sources []source.Source
 	for _, item := range cfg.Sources {

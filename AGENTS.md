@@ -39,6 +39,8 @@ plugproxy 是一个 Go 语言轻量代理采集、检测、代理池管理和接
 go test ./...
 go build -o bin/plugproxy ./cmd/plugproxy
 go run ./cmd/plugproxy version
+go run ./cmd/plugproxy init
+go run ./cmd/plugproxy doctor
 go run ./cmd/plugproxy fetch -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list
 go run ./cmd/plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true

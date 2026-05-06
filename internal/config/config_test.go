@@ -49,3 +49,19 @@ func TestLoadMissingDefaultReturnsDefaultConfig(t *testing.T) {
 		t.Fatal("expected default sources")
 	}
 }
+
+func TestSaveWritesConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sources.json")
+	cfg := Config{Sources: []SourceConfig{{Name: "test", Type: "raw_text_url", URL: "https://example.com/proxies.txt"}}}
+
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Sources) != 1 || loaded.Sources[0].Name != "test" {
+		t.Fatalf("unexpected loaded config %#v", loaded)
+	}
+}

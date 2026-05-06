@@ -14,6 +14,7 @@ import (
 	"github.com/LING71671/plugproxy/internal/cache"
 	"github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/discover"
+	"github.com/LING71671/plugproxy/internal/doctor"
 	"github.com/LING71671/plugproxy/internal/pool"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
@@ -37,6 +38,39 @@ func main() {
 	switch os.Args[1] {
 	case "version":
 		fmt.Printf("%s commit=%s date=%s\n", version, commit, date)
+	case "init":
+		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		force := fs.Bool("force", false, "overwrite existing config")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "force": true}))
+		if err := writeInitialConfig(*configPath, *force); err != nil {
+			exitErr(err)
+		}
+		writeJSON(map[string]any{"config": *configPath, "created": true})
+	case "doctor":
+		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		apiURL := fs.String("api", "", "optional plugproxy API base URL")
+		sourceCheck := fs.Bool("source-check", false, "fetch sources during diagnosis")
+		sourceWorkers := fs.Int("source-workers", 8, "number of concurrent source checks")
+		timeout := fs.Duration("timeout", 5*time.Second, "doctor request timeout")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
+			"config": false, "cache": false, "api": false, "source-check": true,
+			"source-workers": false, "timeout": false,
+		}))
+		report := doctor.Run(ctx, doctor.Options{
+			ConfigPath:    *configPath,
+			CachePath:     *cachePath,
+			APIURL:        *apiURL,
+			SourceCheck:   *sourceCheck,
+			SourceWorkers: *sourceWorkers,
+			Timeout:       *timeout,
+		})
+		writeJSON(report)
+		if !report.OK {
+			os.Exit(1)
+		}
 	case "fetch":
 		fs := flag.NewFlagSet("fetch", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
@@ -231,6 +265,8 @@ func usage() {
 
 Usage:
   plugproxy version
+  plugproxy init [-config plugproxy.sources.json] [-force]
+  plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
   plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
@@ -255,6 +291,20 @@ func newApplication(log *slog.Logger, configPath string) (*app.App, error) {
 		return nil, err
 	}
 	return app.NewWithSources(log, sources), nil
+}
+
+func writeInitialConfig(path string, force bool) error {
+	if path == "" {
+		path = config.DefaultPath
+	}
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s already exists; use -force to overwrite", path)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return config.Save(path, config.DefaultConfig())
 }
 
 func exitErr(err error) {

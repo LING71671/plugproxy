@@ -19,17 +19,23 @@ plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池
 
 ```bash
 plugproxy version
+plugproxy init
+plugproxy doctor
 ```
 
 也可以直接从源码运行：
 
 ```bash
 go run ./cmd/plugproxy version
+go run ./cmd/plugproxy init
+go run ./cmd/plugproxy doctor
 ```
 
 ## 快速开始
 
 ```bash
+plugproxy init
+plugproxy doctor
 plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
 plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
 plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
@@ -101,6 +107,8 @@ plugproxy 的核心原则是“发现候选源”和“使用可用代理”分�
 
 ```bash
 go run ./cmd/plugproxy version
+go run ./cmd/plugproxy init
+go run ./cmd/plugproxy doctor
 go run ./cmd/plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
