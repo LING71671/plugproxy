@@ -17,9 +17,10 @@ plugproxy 的并发能力不只追求更大的 worker 数，而是追求在免�
 - `fetch -source-workers` 控制源级采集并发。
 - `check -workers` 控制代理检测并发。
 - `discover validate -workers` 控制候选源验证并发。
-- `run` 后台刷新串行执行，避免多轮 refresh 重入。
+- `run` 后台刷新串行执行，避免多轮 refresh 重入，并暴露 `phase`、`progress` 和跳过原因。
 - 源请求已有 timeout、body_limit 和 context。
 - 采集失败会被源级隔离，所有源失败时可以回退缓存。
+- v0.2.1 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress 和 discover write-sources。
 
 ## 总体思路
 
@@ -91,23 +92,26 @@ source workers -> source result -> dedupe -> schedule checks -> check workers ->
 - 增加全局 socket/连接令牌，避免检测 worker 过多导致本机资源耗尽。
 - 错误分类：连接拒绝、超时、协议不支持、DNS 错误、响应不匹配分别计数。
 
-建议 CLI 草案：
+建议 CLI：
 
 ```bash
-plugproxy check -workers 128 -max-checks 5000 -check-ttl 30m
-plugproxy run -workers 128 -max-checks 5000 -check-ttl 30m
+plugproxy check -workers 128 -max-checks 300 -check-profile smart
+plugproxy run -workers 128 -max-checks 300 -check-profile smart
 ```
 
 ## 调度策略
 
-当前第一版检测调度器使用 TTL + 稳定排序，不引入第三方依赖，也不做复杂评分。
+当前检测调度器支持 `full` 和 `smart` 两种 profile，不引入第三方依赖，也不做复杂评分。
 
 已落地规则：
 
 - `CheckCount == 0` 或 `LastCheckedAt` 为空的代理优先进入本轮检测。
-- `-check-ttl > 0` 时，最近检测过的代理会跳过并计入 `skipped_recent`。
+- `full` profile 使用 `-check-ttl`、`-max-checks` 和稳定排序，保持 CLI 兼容。
+- `smart` profile 对 healthy/degraded/dead 使用不同复检 TTL，死亡代理按连续失败次数退避。
+- `smart` profile 默认跳过 SOCKS4 unsupported，计入 `skipped_unsupported`。
+- 有限预算下可按协议公平抽样，避免单一协议或前几个源占满 `max-checks`。
 - 候选代理按 `unchecked > healthy > degraded > dead` 稳定排序。
-- 同状态下更久未检测的代理优先，再按 `health_score` 高者优先。
+- 同状态下更久未检测的代理优先，再按 `health_score` 高者优先，最后按 `seen_count` 高者优先。
 - `-max-checks > 0` 时只检测排序后的前 N 个，其余计入 `skipped_limit`。
 
 后续可以从简单排序演进到优先级队列，但第一版不需要复杂调度器。
@@ -129,6 +133,8 @@ plugproxy run -workers 128 -max-checks 5000 -check-ttl 30m
 - EWMA：平滑源成功率、响应时间、超时率和代理检测延迟。
 - AIMD：根据超时率、错误率和 429/5xx 信号动态调整并发。
 - Circuit breaker：对连续失败的源短期熔断，冷却后半开试探。
+
+实测结论：默认源已经能抓到数万级代理，但免费代理即时可用率很低，检测失败主要集中在 timeout。因此调度优先级应从“抓更多”转向“减少无效检测、分协议抽样、保留和复检少量成功代理”。
 
 ## HTTP Transport 与超时
 
@@ -291,7 +297,8 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 
 - 已增加 `check-ttl`，跳过最近检测过的代理。
 - 已增加 `max-checks`，限制单轮检测规模。
-- 已增加检测调度统计：`scheduled`、`skipped_recent`、`skipped_limit`。
+- 已增加 smart check profile：分层复检、死亡退避、协议公平、跳过 unsupported。
+- 已增加检测调度统计：`scheduled`、`skipped_recent`、`skipped_limit`、`skipped_unsupported`、`skipped_backoff`、`by_protocol`。
 - 已增强 refresh/status 阶段、进度、取消和跳过原因。
 - 已增加 source 冷却、host 级并发限制和错误分类报告。
 - 已增强 doctor/source report 源级耗时与错误汇总。

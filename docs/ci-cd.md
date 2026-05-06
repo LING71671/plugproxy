@@ -39,9 +39,9 @@ gh issue create
 gh pr create
 gh pr checks
 gh pr merge --auto --squash --delete-branch
-git tag -a v0.2.0 -m "v0.2.0"
-git push origin v0.2.0
-gh release view v0.2.0 --web
+git tag -a v0.2.1 -m "v0.2.1"
+git push origin v0.2.1
+gh release view v0.2.1 --web
 ```
 
 ## 约定

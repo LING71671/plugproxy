@@ -66,7 +66,7 @@ func TestMemoryPoolPreservesHealthWhenFetchedAgain(t *testing.T) {
 		Source:        "cache",
 	})
 
-	p.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, Source: "fresh"})
+	p.AddSeen(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, Source: "fresh"})
 
 	items := p.List(Filter{})
 	if len(items) != 1 {
@@ -80,6 +80,25 @@ func TestMemoryPoolPreservesHealthWhenFetchedAgain(t *testing.T) {
 	}
 	if !items[0].LastCheckedAt.Equal(checkedAt) {
 		t.Fatalf("expected last checked to be preserved")
+	}
+	if items[0].SeenCount != 1 || items[0].LastSeenAt.IsZero() {
+		t.Fatalf("expected seen metadata to be updated, got %#v", items[0])
+	}
+}
+
+func TestMemoryPoolDoesNotIncrementSeenOnCheckResult(t *testing.T) {
+	p := NewMemory()
+	p.AddSeen(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP})
+	item := p.List(Filter{})[0]
+
+	item.CheckCount = 1
+	item.LastCheckedAt = time.Now()
+	item.HealthStatus = model.HealthDegraded
+	p.Add(item)
+
+	items := p.List(Filter{})
+	if items[0].SeenCount != 1 {
+		t.Fatalf("expected check result not to increment seen count, got %#v", items[0])
 	}
 }
 

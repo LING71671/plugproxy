@@ -10,6 +10,7 @@ import (
 
 	"github.com/LING71671/plugproxy/internal/cache"
 	"github.com/LING71671/plugproxy/internal/pool"
+	"github.com/LING71671/plugproxy/internal/scheduler"
 	"github.com/LING71671/plugproxy/internal/source"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
@@ -146,6 +147,9 @@ func TestFetchWithOptionsPreservesCachedHealth(t *testing.T) {
 	if items[0].HealthStatus != model.HealthHealthy || items[0].HealthScore != 90 || items[0].CheckCount != 3 {
 		t.Fatalf("expected cached health to be preserved, got %#v", items[0])
 	}
+	if items[0].SeenCount != 1 || items[0].LastSeenAt.IsZero() {
+		t.Fatalf("expected seen metadata to be updated, got %#v", items[0])
+	}
 }
 
 func TestCheckWithOptionsWritesCache(t *testing.T) {
@@ -233,6 +237,40 @@ func TestCheckWithOptionsHonorsMaxChecks(t *testing.T) {
 	}
 }
 
+func TestCheckWithOptionsSmartSkipsUnsupported(t *testing.T) {
+	application := NewWithSources(slog.Default(), nil)
+	application.Pool().Add(model.Proxy{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4})
+
+	stats := application.CheckWithOptions(context.Background(), CheckOptions{
+		Workers:         1,
+		Profile:         scheduler.ProfileSmart,
+		SkipUnsupported: true,
+	})
+	if stats.Scheduled != 0 || stats.SkippedUnsupported != 1 || stats.Unsupported != 0 {
+		t.Fatalf("unexpected smart skip stats %#v", stats)
+	}
+	if stats.ByProtocol[model.ProtocolSOCKS4].SkippedUnsupported != 1 {
+		t.Fatalf("expected by_protocol skip stats, got %#v", stats.ByProtocol)
+	}
+}
+
+func TestCheckWithOptionsProtocolStats(t *testing.T) {
+	application := NewWithSources(slog.Default(), nil)
+	application.Pool().Add(model.Proxy{ID: "http://127.0.0.1:8080", Address: "127.0.0.1:8080", Protocol: model.ProtocolHTTP})
+	application.Pool().Add(model.Proxy{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4})
+
+	stats := application.CheckWithOptions(context.Background(), CheckOptions{
+		Workers:   1,
+		MaxChecks: 1,
+	})
+	if stats.Scheduled != 1 || stats.SkippedLimit != 1 {
+		t.Fatalf("unexpected stats %#v", stats)
+	}
+	if stats.ByProtocol[model.ProtocolHTTP].Total != 1 || stats.ByProtocol[model.ProtocolSOCKS4].Total != 1 {
+		t.Fatalf("unexpected protocol stats %#v", stats.ByProtocol)
+	}
+}
+
 func TestFetchCheckWithOptionsChecksFastSourceBeforeSlowSourceCompletes(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -300,6 +338,20 @@ func TestFetchCheckWithOptionsUsesCacheAndCheckTTL(t *testing.T) {
 	}
 	if report.Fetch.Added != 1 || report.Fetch.Duplicates != 0 {
 		t.Fatalf("unexpected fetch report %#v", report.Fetch)
+	}
+}
+
+func TestFetchCheckWithOptionsSmartProfileSkipsUnsupported(t *testing.T) {
+	application := NewWithSources(slog.Default(), []source.Source{
+		source.NewStatic("fresh", []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}),
+	})
+
+	report := application.FetchCheckWithOptions(context.Background(),
+		FetchOptions{Workers: 1, CachePath: filepath.Join(t.TempDir(), "cache.json"), CacheWrite: false},
+		CheckOptions{Workers: 1, Profile: scheduler.ProfileSmart, SkipUnsupported: true},
+	)
+	if report.Check.Scheduled != 0 || report.Check.SkippedUnsupported != 1 {
+		t.Fatalf("unexpected smart pipeline stats %#v", report.Check)
 	}
 }
 

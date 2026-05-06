@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,13 +21,39 @@ func TestReorderFlagArgsSupportsNewRunFlags(t *testing.T) {
 		"-refresh=true",
 		"-source-cooldown", "1m",
 		"-per-host-workers", "2",
+		"-check-profile", "smart",
+		"-protocol-fair=true",
 		"-skip-check=false",
 	}, map[string]bool{
-		"refresh": true, "source-cooldown": false, "per-host-workers": false, "skip-check": true,
+		"refresh": true, "source-cooldown": false, "per-host-workers": false,
+		"check-profile": false, "protocol-fair": true, "skip-check": true,
 	})
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-source-cooldown 1m") || !strings.Contains(joined, "-per-host-workers 2") {
+	if !strings.Contains(joined, "-source-cooldown 1m") ||
+		!strings.Contains(joined, "-per-host-workers 2") ||
+		!strings.Contains(joined, "-check-profile smart") ||
+		!strings.Contains(joined, "-protocol-fair=true") {
 		t.Fatalf("new flags were not preserved: %#v", args)
+	}
+}
+
+func TestSchedulerProfileParser(t *testing.T) {
+	if schedulerProfile("smart") != "smart" {
+		t.Fatal("expected smart profile")
+	}
+	if schedulerProfile("bad") != "full" {
+		t.Fatal("expected invalid profile to fall back to full")
+	}
+}
+
+func TestFlagWasSet(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	value := fs.Bool("skip-unsupported", false, "")
+	if err := fs.Parse([]string{"-skip-unsupported=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if !flagWasSet(fs, "skip-unsupported") || *value {
+		t.Fatalf("expected explicit false flag to be detected")
 	}
 }
 

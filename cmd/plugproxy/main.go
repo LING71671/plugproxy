@@ -18,12 +18,13 @@ import (
 	"github.com/LING71671/plugproxy/internal/discover"
 	"github.com/LING71671/plugproxy/internal/doctor"
 	"github.com/LING71671/plugproxy/internal/pool"
+	"github.com/LING71671/plugproxy/internal/scheduler"
 	"github.com/LING71671/plugproxy/internal/source"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
 var (
-	version = "0.2.0-dev"
+	version = "0.2.1"
 	commit  = "unknown"
 	date    = "unknown"
 )
@@ -116,11 +117,28 @@ func main() {
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
 		maxChecks := fs.Int("max-checks", 0, "maximum proxies to check in this run; 0 means unlimited")
 		checkTTL := fs.Duration("check-ttl", 0, "skip proxies checked within this duration; 0 disables skipping")
+		checkProfile := fs.String("check-profile", "full", "check scheduling profile: full or smart")
+		healthyCheckTTL := fs.Duration("healthy-check-ttl", 6*time.Hour, "smart profile TTL for healthy proxies")
+		degradedCheckTTL := fs.Duration("degraded-check-ttl", 30*time.Minute, "smart profile TTL for degraded proxies")
+		deadCheckTTL := fs.Duration("dead-check-ttl", 12*time.Hour, "smart profile TTL for dead proxies")
+		deadBackoffMax := fs.Duration("dead-backoff-max", 72*time.Hour, "maximum smart profile dead proxy backoff")
+		protocolFair := fs.Bool("protocol-fair", false, "distribute limited checks across protocols")
+		skipUnsupported := fs.Bool("skip-unsupported", false, "skip protocols that the checker cannot support")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
 			"config": false, "cache": false, "cache-fallback": true, "source-workers": false,
 			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
 			"workers": false, "protocol": false, "target": false, "timeout": false, "max-checks": false, "check-ttl": false,
+			"check-profile": false, "healthy-check-ttl": false, "degraded-check-ttl": false, "dead-check-ttl": false,
+			"dead-backoff-max": false, "protocol-fair": true, "skip-unsupported": true,
 		}))
+		if schedulerProfile(*checkProfile) == scheduler.ProfileSmart {
+			if !flagWasSet(fs, "protocol-fair") {
+				*protocolFair = true
+			}
+			if !flagWasSet(fs, "skip-unsupported") {
+				*skipUnsupported = true
+			}
+		}
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
@@ -135,14 +153,21 @@ func main() {
 			CacheWrite:             true,
 		})
 		stats := application.CheckWithOptions(ctx, app.CheckOptions{
-			Workers:    *workers,
-			TargetURL:  *target,
-			Timeout:    *timeout,
-			Filter:     pool.Filter{Protocol: model.Protocol(*protocol)},
-			CachePath:  *cachePath,
-			CacheWrite: true,
-			MaxChecks:  *maxChecks,
-			CheckTTL:   *checkTTL,
+			Workers:          *workers,
+			TargetURL:        *target,
+			Timeout:          *timeout,
+			Filter:           pool.Filter{Protocol: model.Protocol(*protocol)},
+			CachePath:        *cachePath,
+			CacheWrite:       true,
+			MaxChecks:        *maxChecks,
+			CheckTTL:         *checkTTL,
+			Profile:          schedulerProfile(*checkProfile),
+			HealthyCheckTTL:  *healthyCheckTTL,
+			DegradedCheckTTL: *degradedCheckTTL,
+			DeadCheckTTL:     *deadCheckTTL,
+			DeadBackoffMax:   *deadBackoffMax,
+			ProtocolFair:     *protocolFair,
+			SkipUnsupported:  *skipUnsupported,
 		})
 		writeJSON(stats)
 	case "list":
@@ -229,6 +254,13 @@ func main() {
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
 		maxChecks := fs.Int("max-checks", 0, "maximum proxies to check per run; 0 means unlimited")
 		checkTTL := fs.Duration("check-ttl", 0, "skip proxies checked within this duration; 0 disables skipping")
+		checkProfile := fs.String("check-profile", "smart", "check scheduling profile: full or smart")
+		healthyCheckTTL := fs.Duration("healthy-check-ttl", 6*time.Hour, "smart profile TTL for healthy proxies")
+		degradedCheckTTL := fs.Duration("degraded-check-ttl", 30*time.Minute, "smart profile TTL for degraded proxies")
+		deadCheckTTL := fs.Duration("dead-check-ttl", 12*time.Hour, "smart profile TTL for dead proxies")
+		deadBackoffMax := fs.Duration("dead-backoff-max", 72*time.Hour, "maximum smart profile dead proxy backoff")
+		protocolFair := fs.Bool("protocol-fair", true, "distribute limited checks across protocols")
+		skipUnsupported := fs.Bool("skip-unsupported", true, "skip protocols that the checker cannot support")
 		skipCheck := fs.Bool("skip-check", true, "skip proxy checking on startup")
 		refresh := fs.Bool("refresh", true, "enable background fetch and check refresh")
 		refreshInterval := fs.Duration("refresh-interval", 5*time.Minute, "background refresh interval")
@@ -247,6 +279,8 @@ func main() {
 			"refresh-min-interval": false, "refresh-max-interval": false, "refresh-jitter": false, "min-healthy": false,
 			"min-healthy-ratio": false, "unchecked-threshold": false, "refresh-failure-backoff": false,
 			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
+			"check-profile": false, "healthy-check-ttl": false, "degraded-check-ttl": false, "dead-check-ttl": false,
+			"dead-backoff-max": false, "protocol-fair": true, "skip-unsupported": true,
 		}))
 
 		application, err := newApplication(log, *configPath)
@@ -263,13 +297,20 @@ func main() {
 			CacheWrite:             true,
 		}
 		checkOptions := app.CheckOptions{
-			Workers:    *workers,
-			TargetURL:  *target,
-			Timeout:    *timeout,
-			CachePath:  *cachePath,
-			CacheWrite: true,
-			MaxChecks:  *maxChecks,
-			CheckTTL:   *checkTTL,
+			Workers:          *workers,
+			TargetURL:        *target,
+			Timeout:          *timeout,
+			CachePath:        *cachePath,
+			CacheWrite:       true,
+			MaxChecks:        *maxChecks,
+			CheckTTL:         *checkTTL,
+			Profile:          schedulerProfile(*checkProfile),
+			HealthyCheckTTL:  *healthyCheckTTL,
+			DegradedCheckTTL: *degradedCheckTTL,
+			DeadCheckTTL:     *deadCheckTTL,
+			DeadBackoffMax:   *deadBackoffMax,
+			ProtocolFair:     *protocolFair,
+			SkipUnsupported:  *skipUnsupported,
 		}
 		if *skipCheck {
 			application.FetchWithOptions(ctx, fetchOptions)
@@ -317,11 +358,11 @@ Usage:
   plugproxy init [-config plugproxy.sources.json] [-force]
   plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
   plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m]
-  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-ttl 0s]
+  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-profile full]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
   plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
-  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-ttl 0s]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-profile smart]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE [-write-sources plugproxy.sources.candidates.json]
@@ -359,6 +400,25 @@ func writeInitialConfig(path string, force bool) error {
 func exitErr(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+func schedulerProfile(value string) scheduler.CheckProfile {
+	switch strings.ToLower(value) {
+	case string(scheduler.ProfileSmart):
+		return scheduler.ProfileSmart
+	default:
+		return scheduler.ProfileFull
+	}
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	wasSet := false
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == name {
+			wasSet = true
+		}
+	})
+	return wasSet
 }
 
 func runDiscover(ctx context.Context, args []string) error {

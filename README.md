@@ -2,7 +2,7 @@
 
 plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池管理和接入工具。
 
-> 当前状态：v0.2.0 可用预览版。
+> 当前状态：v0.2.1 可用预览版。
 
 ## 目标
 
@@ -37,9 +37,9 @@ go run ./cmd/plugproxy doctor
 plugproxy init
 plugproxy doctor
 plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json
-plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
+plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 300 -check-profile smart
 plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
-plugproxy run -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m
+plugproxy run -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 300
 ```
 
 Go 项目接入见 [Go SDK 接入](docs/sdk.md)。
@@ -113,8 +113,8 @@ go run ./cmd/plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plug
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
 go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
-go run ./cmd/plugproxy check -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
-go run ./cmd/plugproxy run -source-workers 32 -per-host-workers 4 -source-cooldown 15m -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 0 -check-ttl 0s
+go run ./cmd/plugproxy check -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 300 -check-profile smart
+go run ./cmd/plugproxy run -source-workers 32 -per-host-workers 4 -source-cooldown 15m -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 300 -check-profile smart
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -156,7 +156,7 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 健康状态会写入 `.plugproxy.cache.json`，独立执行一次 `check` 后，下一次 `get/list/run` 会复用历史健康评分。
 
-`check` 和 `run` 支持轻量检测调度：`-check-ttl` 可跳过最近检测过的代理，`-max-checks` 可限制单轮检测数量。默认 `-check-ttl 0s -max-checks 0` 表示保持全量检测。
+`check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议公平抽样。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。
 
 ## 代理源配置
 

@@ -44,14 +44,21 @@ type FetchOptions struct {
 }
 
 type CheckOptions struct {
-	Workers    int
-	TargetURL  string
-	Timeout    time.Duration
-	Filter     pool.Filter
-	CachePath  string
-	CacheWrite bool
-	MaxChecks  int
-	CheckTTL   time.Duration
+	Workers          int
+	TargetURL        string
+	Timeout          time.Duration
+	Filter           pool.Filter
+	CachePath        string
+	CacheWrite       bool
+	MaxChecks        int
+	CheckTTL         time.Duration
+	Profile          scheduler.CheckProfile
+	HealthyCheckTTL  time.Duration
+	DegradedCheckTTL time.Duration
+	DeadCheckTTL     time.Duration
+	DeadBackoffMax   time.Duration
+	SkipUnsupported  bool
+	ProtocolFair     bool
 }
 
 type FetchReport struct {
@@ -80,16 +87,19 @@ type SourceFetchReport struct {
 }
 
 type CheckStats struct {
-	Total         int            `json:"total"`
-	Scheduled     int            `json:"scheduled"`
-	SkippedRecent int            `json:"skipped_recent"`
-	SkippedLimit  int            `json:"skipped_limit"`
-	Healthy       int            `json:"healthy"`
-	Degraded      int            `json:"degraded"`
-	Dead          int            `json:"dead"`
-	Unsupported   int            `json:"unsupported"`
-	Failed        int            `json:"failed"`
-	ErrorTypes    map[string]int `json:"error_types,omitempty"`
+	Total              int                                             `json:"total"`
+	Scheduled          int                                             `json:"scheduled"`
+	SkippedRecent      int                                             `json:"skipped_recent"`
+	SkippedLimit       int                                             `json:"skipped_limit"`
+	SkippedUnsupported int                                             `json:"skipped_unsupported"`
+	SkippedBackoff     int                                             `json:"skipped_backoff"`
+	Healthy            int                                             `json:"healthy"`
+	Degraded           int                                             `json:"degraded"`
+	Dead               int                                             `json:"dead"`
+	Unsupported        int                                             `json:"unsupported"`
+	Failed             int                                             `json:"failed"`
+	ErrorTypes         map[string]int                                  `json:"error_types,omitempty"`
+	ByProtocol         map[model.Protocol]scheduler.CheckProtocolStats `json:"by_protocol,omitempty"`
 }
 
 type PipelineReport struct {
@@ -212,7 +222,7 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 				continue
 			}
 			seen[proxy.ID] = struct{}{}
-			a.pool.Add(proxy)
+			a.pool.AddSeen(proxy)
 			count++
 		}
 	}
@@ -245,6 +255,7 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 
 func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptions, checkOptions CheckOptions) PipelineReport {
 	fetchOptions = normalizeFetchOptions(fetchOptions, len(a.sources))
+	checkOptions = normalizeCheckOptions(checkOptions)
 	if checkOptions.Workers <= 0 {
 		checkOptions.Workers = 32
 	}
@@ -364,23 +375,15 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 		if checkOptions.MaxChecks > 0 {
 			remaining := checkOptions.MaxChecks - scheduleStats.Scheduled
 			if remaining <= 0 {
-				schedule := scheduler.ScheduleChecks(candidates, scheduler.CheckOptions{CheckTTL: checkOptions.CheckTTL})
-				scheduleStats.Total += schedule.Stats.Total
-				scheduleStats.SkippedRecent += schedule.Stats.SkippedRecent
-				scheduleStats.SkippedLimit += schedule.Stats.Selected
+				schedule := scheduler.ScheduleChecks(candidates, schedulerOptions(checkOptions, 0))
+				mergeScheduleStats(&scheduleStats, schedule.Stats, true)
 				return true
 			}
 			maxChecks = remaining
 		}
 
-		schedule := scheduler.ScheduleChecks(candidates, scheduler.CheckOptions{
-			MaxChecks: maxChecks,
-			CheckTTL:  checkOptions.CheckTTL,
-		})
-		scheduleStats.Total += schedule.Stats.Total
-		scheduleStats.Scheduled += schedule.Stats.Selected
-		scheduleStats.SkippedRecent += schedule.Stats.SkippedRecent
-		scheduleStats.SkippedLimit += schedule.Stats.SkippedLimit
+		schedule := scheduler.ScheduleChecks(candidates, schedulerOptions(checkOptions, maxChecks))
+		mergeScheduleStats(&scheduleStats, schedule.Stats, false)
 		progressMu.Lock()
 		progress.ScheduledChecks += schedule.Stats.Selected
 		progressMu.Unlock()
@@ -439,7 +442,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 				continue
 			}
 			seenFetched[id] = struct{}{}
-			merged := a.pool.AddAndGet(proxy)
+			merged := a.pool.AddSeenAndGet(proxy)
 			report.Fetch.Added++
 			if matchesFilter(merged, checkOptions.Filter) {
 				checkCandidates = append(checkCandidates, merged)
@@ -481,20 +484,15 @@ func (a *App) Check(ctx context.Context, workers int, targetURL string, timeout 
 }
 
 func (a *App) CheckWithOptions(ctx context.Context, options CheckOptions) CheckStats {
+	options = normalizeCheckOptions(options)
 	if options.Workers <= 0 {
 		options.Workers = 32
 	}
 
 	items := a.pool.List(options.Filter)
-	schedule := scheduler.ScheduleChecks(items, scheduler.CheckOptions{
-		MaxChecks: options.MaxChecks,
-		CheckTTL:  options.CheckTTL,
-	})
+	schedule := scheduler.ScheduleChecks(items, schedulerOptions(options, options.MaxChecks))
 	stats := a.checkItems(ctx, schedule.Selected, options.Workers, options.TargetURL, options.Timeout)
-	stats.Total = schedule.Stats.Total
-	stats.Scheduled = schedule.Stats.Selected
-	stats.SkippedRecent = schedule.Stats.SkippedRecent
-	stats.SkippedLimit = schedule.Stats.SkippedLimit
+	mergeScheduleStats(&stats, schedule.Stats, false)
 	if options.CacheWrite {
 		if options.CachePath == "" {
 			options.CachePath = cache.DefaultPath
@@ -522,16 +520,19 @@ func applyCheckResult(result checker.Result) model.Proxy {
 
 func combineCheckStats(schedule CheckStats, outcomes CheckStats) CheckStats {
 	return CheckStats{
-		Total:         schedule.Total,
-		Scheduled:     schedule.Scheduled,
-		SkippedRecent: schedule.SkippedRecent,
-		SkippedLimit:  schedule.SkippedLimit,
-		Healthy:       outcomes.Healthy,
-		Degraded:      outcomes.Degraded,
-		Dead:          outcomes.Dead,
-		Unsupported:   outcomes.Unsupported,
-		Failed:        outcomes.Failed,
-		ErrorTypes:    outcomes.ErrorTypes,
+		Total:              schedule.Total,
+		Scheduled:          schedule.Scheduled,
+		SkippedRecent:      schedule.SkippedRecent,
+		SkippedLimit:       schedule.SkippedLimit,
+		SkippedUnsupported: schedule.SkippedUnsupported,
+		SkippedBackoff:     schedule.SkippedBackoff,
+		Healthy:            outcomes.Healthy,
+		Degraded:           outcomes.Degraded,
+		Dead:               outcomes.Dead,
+		Unsupported:        outcomes.Unsupported,
+		Failed:             outcomes.Failed,
+		ErrorTypes:         outcomes.ErrorTypes,
+		ByProtocol:         schedule.ByProtocol,
 	}
 }
 
@@ -649,6 +650,57 @@ func normalizeFetchOptions(options FetchOptions, sourceCount int) FetchOptions {
 		options.SourceCooldown = 15 * time.Minute
 	}
 	return options
+}
+
+func normalizeCheckOptions(options CheckOptions) CheckOptions {
+	if options.Profile == "" {
+		options.Profile = scheduler.ProfileFull
+	}
+	return options
+}
+
+func schedulerOptions(options CheckOptions, maxChecks int) scheduler.CheckOptions {
+	return scheduler.CheckOptions{
+		MaxChecks:        maxChecks,
+		CheckTTL:         options.CheckTTL,
+		Profile:          options.Profile,
+		HealthyCheckTTL:  options.HealthyCheckTTL,
+		DegradedCheckTTL: options.DegradedCheckTTL,
+		DeadCheckTTL:     options.DeadCheckTTL,
+		DeadBackoffMax:   options.DeadBackoffMax,
+		SkipUnsupported:  options.SkipUnsupported,
+		ProtocolFair:     options.ProtocolFair,
+	}
+}
+
+func mergeScheduleStats(target *CheckStats, stats scheduler.CheckStats, selectedAsLimit bool) {
+	target.Total += stats.Total
+	if selectedAsLimit {
+		target.SkippedLimit += stats.Selected + stats.SkippedLimit
+	} else {
+		target.Scheduled += stats.Selected
+		target.SkippedLimit += stats.SkippedLimit
+	}
+	target.SkippedRecent += stats.SkippedRecent
+	target.SkippedUnsupported += stats.SkippedUnsupported
+	target.SkippedBackoff += stats.SkippedBackoff
+	if target.ByProtocol == nil {
+		target.ByProtocol = make(map[model.Protocol]scheduler.CheckProtocolStats)
+	}
+	for protocol, value := range stats.ByProtocol {
+		current := target.ByProtocol[protocol]
+		current.Total += value.Total
+		if selectedAsLimit {
+			current.SkippedLimit += value.Selected + value.SkippedLimit
+		} else {
+			current.Selected += value.Selected
+			current.SkippedLimit += value.SkippedLimit
+		}
+		current.SkippedRecent += value.SkippedRecent
+		current.SkippedUnsupported += value.SkippedUnsupported
+		current.SkippedBackoff += value.SkippedBackoff
+		target.ByProtocol[protocol] = current
+	}
 }
 
 func (a *App) activeSources(options FetchOptions) ([]source.Source, []SourceFetchReport) {

@@ -109,6 +109,115 @@ func TestScheduleChecksZeroTTLDoesNotSkipRecent(t *testing.T) {
 	}
 }
 
+func TestScheduleChecksSmartSkipsByStatusTTL(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	proxies := []model.Proxy{
+		checkedProxy("http://healthy:1", model.HealthHealthy, now.Add(-time.Hour), 90),
+		checkedProxy("http://degraded:1", model.HealthDegraded, now.Add(-time.Hour), 50),
+	}
+
+	schedule := ScheduleChecks(proxies, CheckOptions{
+		Now:              now,
+		Profile:          ProfileSmart,
+		HealthyCheckTTL:  6 * time.Hour,
+		DegradedCheckTTL: 30 * time.Minute,
+	})
+	if schedule.Stats.Selected != 1 || schedule.Stats.SkippedRecent != 1 {
+		t.Fatalf("unexpected smart ttl stats %#v", schedule.Stats)
+	}
+	if schedule.Selected[0].ID != "http://degraded:1" {
+		t.Fatalf("expected degraded proxy selected, got %#v", schedule.Selected)
+	}
+}
+
+func TestScheduleChecksSmartDeadBackoff(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	dead := checkedProxy("http://dead:1", model.HealthDead, now.Add(-20*time.Hour), 10)
+	dead.ConsecutiveFailures = 5
+
+	schedule := ScheduleChecks([]model.Proxy{dead}, CheckOptions{
+		Now:            now,
+		Profile:        ProfileSmart,
+		DeadCheckTTL:   12 * time.Hour,
+		DeadBackoffMax: 72 * time.Hour,
+	})
+	if schedule.Stats.Selected != 0 || schedule.Stats.SkippedBackoff != 1 {
+		t.Fatalf("expected dead proxy backed off, got %#v", schedule.Stats)
+	}
+}
+
+func TestScheduleChecksSmartDeadBackoffMax(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	dead := checkedProxy("http://dead:1", model.HealthDead, now.Add(-73*time.Hour), 10)
+	dead.ConsecutiveFailures = 10
+
+	schedule := ScheduleChecks([]model.Proxy{dead}, CheckOptions{
+		Now:            now,
+		Profile:        ProfileSmart,
+		DeadCheckTTL:   12 * time.Hour,
+		DeadBackoffMax: 72 * time.Hour,
+	})
+	if schedule.Stats.Selected != 1 || schedule.Stats.SkippedBackoff != 0 {
+		t.Fatalf("expected dead proxy selected after capped backoff, got %#v", schedule.Stats)
+	}
+}
+
+func TestScheduleChecksSmartSkipsUnsupported(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	proxy := model.Proxy{ID: "socks4://one:1", Address: "one:1", Protocol: model.ProtocolSOCKS4}
+
+	schedule := ScheduleChecks([]model.Proxy{proxy}, CheckOptions{Now: now, Profile: ProfileSmart, SkipUnsupported: true})
+	if schedule.Stats.Selected != 0 || schedule.Stats.SkippedUnsupported != 1 {
+		t.Fatalf("expected unsupported skip, got %#v", schedule.Stats)
+	}
+	if schedule.Stats.ByProtocol[model.ProtocolSOCKS4].SkippedUnsupported != 1 {
+		t.Fatalf("expected protocol unsupported stats, got %#v", schedule.Stats.ByProtocol)
+	}
+}
+
+func TestScheduleChecksProtocolFairLimit(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	proxies := []model.Proxy{
+		uncheckedProxy("http://one:1", model.ProtocolHTTP),
+		uncheckedProxy("http://two:1", model.ProtocolHTTP),
+		uncheckedProxy("https://one:1", model.ProtocolHTTPS),
+		uncheckedProxy("socks5://one:1", model.ProtocolSOCKS5),
+	}
+
+	schedule := ScheduleChecks(proxies, CheckOptions{Now: now, MaxChecks: 3, ProtocolFair: true})
+	got := ids(schedule.Selected)
+	want := []string{"http://one:1", "https://one:1", "socks5://one:1"}
+	assertIDs(t, got, want)
+	if schedule.Stats.SkippedLimit != 1 || schedule.Stats.ByProtocol[model.ProtocolHTTP].SkippedLimit != 1 {
+		t.Fatalf("unexpected limit stats %#v", schedule.Stats)
+	}
+}
+
+func TestScheduleChecksProtocolFairReusesUnusedBudget(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	proxies := []model.Proxy{
+		uncheckedProxy("http://one:1", model.ProtocolHTTP),
+		uncheckedProxy("http://two:1", model.ProtocolHTTP),
+		uncheckedProxy("https://one:1", model.ProtocolHTTPS),
+	}
+
+	schedule := ScheduleChecks(proxies, CheckOptions{Now: now, MaxChecks: 3, ProtocolFair: true})
+	if schedule.Stats.Selected != 3 || schedule.Stats.SkippedLimit != 0 {
+		t.Fatalf("expected unused protocol budget to flow, got %#v", schedule.Stats)
+	}
+}
+
+func TestScheduleChecksSortsSameStatusBySeenCount(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	low := checkedProxy("http://low:1", model.HealthHealthy, now.Add(-time.Hour), 90)
+	high := checkedProxy("http://high:1", model.HealthHealthy, now.Add(-time.Hour), 90)
+	low.SeenCount = 1
+	high.SeenCount = 3
+
+	schedule := ScheduleChecks([]model.Proxy{low, high}, CheckOptions{Now: now})
+	assertIDs(t, ids(schedule.Selected), []string{"http://high:1", "http://low:1"})
+}
+
 func checkedProxy(id string, status model.HealthStatus, checkedAt time.Time, score int) model.Proxy {
 	return model.Proxy{
 		ID:            id,
@@ -119,6 +228,10 @@ func checkedProxy(id string, status model.HealthStatus, checkedAt time.Time, sco
 		CheckCount:    1,
 		LastCheckedAt: checkedAt,
 	}
+}
+
+func uncheckedProxy(id string, protocol model.Protocol) model.Proxy {
+	return model.Proxy{ID: id, Address: id, Protocol: protocol}
 }
 
 func ids(proxies []model.Proxy) []string {

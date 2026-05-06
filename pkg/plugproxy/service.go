@@ -12,6 +12,7 @@ import (
 	"github.com/LING71671/plugproxy/internal/cache"
 	internalconfig "github.com/LING71671/plugproxy/internal/config"
 	"github.com/LING71671/plugproxy/internal/pool"
+	"github.com/LING71671/plugproxy/internal/scheduler"
 	"github.com/LING71671/plugproxy/pkg/client"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
@@ -138,12 +139,15 @@ func (s *Service) refreshOptions() app.RefreshOptions {
 			CacheWrite:    true,
 		},
 		Check: app.CheckOptions{
-			Workers:    s.config.CheckWorkers,
-			TargetURL:  s.config.TargetURL,
-			Timeout:    s.config.CheckTimeout,
-			CachePath:  s.config.CachePath,
-			CacheWrite: true,
-			Filter:     pool.Filter{},
+			Workers:         s.config.CheckWorkers,
+			TargetURL:       s.config.TargetURL,
+			Timeout:         s.config.CheckTimeout,
+			CachePath:       s.config.CachePath,
+			CacheWrite:      true,
+			Filter:          pool.Filter{},
+			Profile:         scheduler.ProfileSmart,
+			SkipUnsupported: true,
+			ProtocolFair:    true,
 		},
 	}
 }

@@ -22,12 +22,29 @@ func (p *MemoryPool) Add(proxy model.Proxy) {
 }
 
 func (p *MemoryPool) AddAndGet(proxy model.Proxy) model.Proxy {
+	return p.addAndGet(proxy, false)
+}
+
+func (p *MemoryPool) AddSeen(proxy model.Proxy) {
+	_ = p.AddSeenAndGet(proxy)
+}
+
+func (p *MemoryPool) AddSeenAndGet(proxy model.Proxy) model.Proxy {
+	return p.addAndGet(proxy, true)
+}
+
+func (p *MemoryPool) addAndGet(proxy model.Proxy, seen bool) model.Proxy {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	proxy = normalize(proxy)
 	if existing, ok := p.proxies[proxy.ID]; ok {
-		proxy = mergeProxy(existing, proxy)
+		proxy = mergeProxy(existing, proxy, seen)
+	} else if seen {
+		proxy.LastSeenAt = time.Now()
+		if proxy.SeenCount <= 0 {
+			proxy.SeenCount = 1
+		}
 	}
 	p.proxies[proxy.ID] = proxy
 	return proxy
@@ -49,11 +66,23 @@ func normalize(proxy model.Proxy) model.Proxy {
 	return proxy
 }
 
-func mergeProxy(existing model.Proxy, incoming model.Proxy) model.Proxy {
+func mergeProxy(existing model.Proxy, incoming model.Proxy, seen bool) model.Proxy {
 	if incoming.CheckCount > 0 || incoming.LastCheckedAt.After(existing.LastCheckedAt) {
+		incoming.LastSeenAt = existing.LastSeenAt
+		incoming.SeenCount = existing.SeenCount
 		return incoming
 	}
 	if existing.CheckCount == 0 {
+		if seen {
+			incoming.LastSeenAt = time.Now()
+			incoming.SeenCount = existing.SeenCount + 1
+			if incoming.SeenCount <= 0 {
+				incoming.SeenCount = 1
+			}
+		} else {
+			incoming.LastSeenAt = existing.LastSeenAt
+			incoming.SeenCount = existing.SeenCount
+		}
 		return incoming
 	}
 
@@ -68,6 +97,15 @@ func mergeProxy(existing model.Proxy, incoming model.Proxy) model.Proxy {
 	incoming.LastSuccessAt = existing.LastSuccessAt
 	incoming.LastFailureAt = existing.LastFailureAt
 	incoming.LastError = existing.LastError
+	incoming.LastSeenAt = existing.LastSeenAt
+	incoming.SeenCount = existing.SeenCount
+	if seen {
+		incoming.LastSeenAt = time.Now()
+		incoming.SeenCount++
+		if incoming.SeenCount <= 0 {
+			incoming.SeenCount = 1
+		}
+	}
 	return incoming
 }
 

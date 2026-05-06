@@ -40,6 +40,7 @@
 - 增加后台自动刷新和异步 `POST /refresh` 触发接口。
 - 增加 HTTP Client SDK、嵌入式 SDK、`/stats` 和 `plugproxy stats`。
 - 增加 v0.2.0 tag release、跨平台二进制和 checksums。
+- 增加 v0.2.1 稳定性版本，收口 smart check scheduler、source 冷却、host 限流、错误分类、refresh 可观测和 discover 配置导出。
 
 ## 第五阶段：管理与可视化
 
@@ -50,10 +51,11 @@
 ## 横向主题：并发能力
 
 - 已增加 `check-ttl` 和 `max-checks`，减少无意义全量检测。
+- 已增加 smart check profile，支持分层复检、死亡退避、协议公平和 unsupported 跳过。
 - 已增加源级失败统计、冷却和 host 级并发限制。
 - 已增强 refresh 状态，暴露阶段、进度、耗时和取消状态。
 - 已对源抓取和检测错误分类，区分超时、连接错误、协议不支持和响应异常。
 - 已支持 `discover validate -write-sources` 导出待人工确认的源配置。
-- 后续按健康状态、检测过期时间和协议进行调度优化。
+- 后续继续推进 source 半开试探、全局连接预算、HTTP Transport 参数集中配置和 atomic cache write。
 
 详细设计见 [并发能力设计备忘](concurrency.md)。

@@ -40,6 +40,8 @@ type Proxy struct {
 	LastSuccessAt       time.Time     `json:"last_success_at,omitempty"`
 	LastFailureAt       time.Time     `json:"last_failure_at,omitempty"`
 	LastError           string        `json:"last_error,omitempty"`
+	LastSeenAt          time.Time     `json:"last_seen_at,omitempty"`
+	SeenCount           int           `json:"seen_count,omitempty"`
 	CreatedAt           time.Time     `json:"created_at"`
 }
 
