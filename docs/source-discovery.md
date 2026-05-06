@@ -88,7 +88,8 @@ plugproxy discover search -query "free proxy list socks5" -limit 10
 plugproxy discover search -query "free proxy list socks5" -limit 10 -ai
 plugproxy discover repo jhao104/proxy_pool -workers 16
 plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
-plugproxy discover validate candidates.json -workers 128
+plugproxy discover validate candidates.json -workers 128 -per-host-workers 4
+plugproxy discover validate candidates.json -write-sources plugproxy.sources.candidates.json
 ```
 
 AI 默认关闭。开启 AI 搜索时需要配置：
@@ -122,6 +123,14 @@ discover -> candidates -> validate source -> human review -> source config -> fe
   "enabled": true
 }
 ```
+
+也可以让 `discover validate` 先导出一份默认禁用的候选源配置：
+
+```bash
+plugproxy discover validate candidates.json -write-sources plugproxy.sources.candidates.json
+```
+
+导出文件只包含验证通过且 `adapter_required=false` 的 `raw_text_url`、`json_url` 和 `api_url` 候选源，并统一写入 `"enabled": false`。推荐流程是先 review 这份文件，再手动合并到 `plugproxy.sources.json` 并开启可信源。
 
 JSON 候选源如果抽样验证能解析出代理，`discover validate` 会标记为 `adapter_required=false`，并输出 `recipe.parser=json_auto`。进入配置时可以使用自动解析，也可以补充轻量字段映射：
 

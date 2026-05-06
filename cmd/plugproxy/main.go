@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -16,11 +18,12 @@ import (
 	"github.com/LING71671/plugproxy/internal/discover"
 	"github.com/LING71671/plugproxy/internal/doctor"
 	"github.com/LING71671/plugproxy/internal/pool"
+	"github.com/LING71671/plugproxy/internal/source"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
 var (
-	version = "0.1.0-dev"
+	version = "0.2.0-dev"
 	commit  = "unknown"
 	date    = "unknown"
 )
@@ -77,16 +80,25 @@ func main() {
 		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
 		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false}))
+		perHostWorkers := fs.Int("per-host-workers", 4, "maximum concurrent source fetches per host")
+		sourceFailureThreshold := fs.Int("source-failure-threshold", 3, "consecutive source failures before cooldown")
+		sourceCooldown := fs.Duration("source-cooldown", 15*time.Minute, "source cooldown after repeated failures")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
+			"config": false, "cache": false, "cache-fallback": true, "source-workers": false,
+			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
+		}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
 		report := application.FetchWithOptions(ctx, app.FetchOptions{
-			Workers:       *sourceWorkers,
-			CachePath:     *cachePath,
-			CacheFallback: *cacheFallback,
-			CacheWrite:    true,
+			Workers:                *sourceWorkers,
+			PerHostWorkers:         *perHostWorkers,
+			SourceFailureThreshold: *sourceFailureThreshold,
+			SourceCooldown:         *sourceCooldown,
+			CachePath:              *cachePath,
+			CacheFallback:          *cacheFallback,
+			CacheWrite:             true,
 		})
 		writeJSON(report)
 	case "check":
@@ -95,22 +107,32 @@ func main() {
 		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
 		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
+		perHostWorkers := fs.Int("per-host-workers", 4, "maximum concurrent source fetches per host")
+		sourceFailureThreshold := fs.Int("source-failure-threshold", 3, "consecutive source failures before cooldown")
+		sourceCooldown := fs.Duration("source-cooldown", 15*time.Minute, "source cooldown after repeated failures")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
 		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
 		maxChecks := fs.Int("max-checks", 0, "maximum proxies to check in this run; 0 means unlimited")
 		checkTTL := fs.Duration("check-ttl", 0, "skip proxies checked within this duration; 0 disables skipping")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "workers": false, "protocol": false, "target": false, "timeout": false, "max-checks": false, "check-ttl": false}))
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
+			"config": false, "cache": false, "cache-fallback": true, "source-workers": false,
+			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
+			"workers": false, "protocol": false, "target": false, "timeout": false, "max-checks": false, "check-ttl": false,
+		}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
 		application.FetchWithOptions(ctx, app.FetchOptions{
-			Workers:       *sourceWorkers,
-			CachePath:     *cachePath,
-			CacheFallback: *cacheFallback,
-			CacheWrite:    true,
+			Workers:                *sourceWorkers,
+			PerHostWorkers:         *perHostWorkers,
+			SourceFailureThreshold: *sourceFailureThreshold,
+			SourceCooldown:         *sourceCooldown,
+			CachePath:              *cachePath,
+			CacheFallback:          *cacheFallback,
+			CacheWrite:             true,
 		})
 		stats := application.CheckWithOptions(ctx, app.CheckOptions{
 			Workers:    *workers,
@@ -200,6 +222,7 @@ func main() {
 		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
 		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
+		perHostWorkers := fs.Int("per-host-workers", 4, "maximum concurrent source fetches per host")
 		addr := fs.String("addr", "127.0.0.1:8899", "HTTP API listen address")
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
@@ -216,11 +239,14 @@ func main() {
 		minHealthyRatio := fs.Float64("min-healthy-ratio", 0, "refresh early when healthy proxy ratio is below this value")
 		uncheckedThreshold := fs.Int("unchecked-threshold", 100, "refresh early when unchecked proxy count reaches this value")
 		refreshFailureBackoff := fs.Float64("refresh-failure-backoff", 2, "multiply refresh delay after failed refresh")
+		sourceFailureThreshold := fs.Int("source-failure-threshold", 3, "consecutive source failures before cooldown")
+		sourceCooldown := fs.Duration("source-cooldown", 15*time.Minute, "source cooldown after repeated failures")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
 			"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "addr": false, "workers": false,
 			"target": false, "timeout": false, "max-checks": false, "check-ttl": false, "skip-check": true, "refresh": true, "refresh-interval": false,
 			"refresh-min-interval": false, "refresh-max-interval": false, "refresh-jitter": false, "min-healthy": false,
 			"min-healthy-ratio": false, "unchecked-threshold": false, "refresh-failure-backoff": false,
+			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
 		}))
 
 		application, err := newApplication(log, *configPath)
@@ -228,10 +254,13 @@ func main() {
 			exitErr(err)
 		}
 		fetchOptions := app.FetchOptions{
-			Workers:       *sourceWorkers,
-			CachePath:     *cachePath,
-			CacheFallback: *cacheFallback,
-			CacheWrite:    true,
+			Workers:                *sourceWorkers,
+			PerHostWorkers:         *perHostWorkers,
+			SourceFailureThreshold: *sourceFailureThreshold,
+			SourceCooldown:         *sourceCooldown,
+			CachePath:              *cachePath,
+			CacheFallback:          *cacheFallback,
+			CacheWrite:             true,
 		}
 		checkOptions := app.CheckOptions{
 			Workers:    *workers,
@@ -287,15 +316,15 @@ Usage:
   plugproxy version
   plugproxy init [-config plugproxy.sources.json] [-force]
   plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
-  plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
-  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-ttl 0s]
+  plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m]
+  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-ttl 0s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
   plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
-  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-ttl 0s]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-ttl 0s]
   plugproxy discover repo owner/name
   plugproxy discover url URL
-  plugproxy discover validate FILE
+  plugproxy discover validate FILE [-write-sources plugproxy.sources.candidates.json]
   plugproxy discover search -query QUERY [-ai]`)
 }
 
@@ -368,7 +397,11 @@ func runDiscover(ctx context.Context, args []string) error {
 		fs := flag.NewFlagSet("discover validate", flag.ExitOnError)
 		timeout := fs.Duration("timeout", 12*time.Second, "per-source validation timeout")
 		workers := fs.Int("workers", 128, "concurrent source validations")
-		_ = fs.Parse(reorderFlagArgs(args[1:], map[string]bool{"timeout": false, "workers": false}))
+		perHostWorkers := fs.Int("per-host-workers", 4, "maximum concurrent validations per host")
+		writeSources := fs.String("write-sources", "", "write validated source candidates to a plugproxy source config")
+		_ = fs.Parse(reorderFlagArgs(args[1:], map[string]bool{
+			"timeout": false, "workers": false, "per-host-workers": false, "write-sources": false,
+		}))
 		if fs.NArg() != 1 {
 			return fmt.Errorf("usage: plugproxy discover validate FILE")
 		}
@@ -378,7 +411,16 @@ func runDiscover(ctx context.Context, args []string) error {
 		}
 		report.Source = "validate"
 		report.Generated = time.Now()
-		report.Candidates = discover.NewValidator(*timeout, *workers).Validate(ctx, report.Candidates)
+		report.Candidates = discover.NewValidatorWithOptions(discover.ValidatorOptions{
+			Timeout:        *timeout,
+			Workers:        *workers,
+			PerHostWorkers: *perHostWorkers,
+		}).Validate(ctx, report.Candidates)
+		if *writeSources != "" {
+			if err := config.Save(*writeSources, sourcesConfigFromCandidates(report.Candidates)); err != nil {
+				return err
+			}
+		}
 		writeJSON(report)
 	case "search":
 		fs := flag.NewFlagSet("discover search", flag.ExitOnError)
@@ -424,7 +466,7 @@ func discoverUsage() {
 	fmt.Println(`Discover commands:
   plugproxy discover repo owner/name
   plugproxy discover url URL
-  plugproxy discover validate FILE
+  plugproxy discover validate FILE [-write-sources plugproxy.sources.candidates.json]
   plugproxy discover search -query QUERY [-limit 10] [-workers 16] [-ai] [-ai-provider openai] [-ai-model gpt-5]`)
 }
 
@@ -473,4 +515,89 @@ func reorderFlagArgs(args []string, boolFlags map[string]bool) []string {
 		}
 	}
 	return append(flags, positionals...)
+}
+
+func sourcesConfigFromCandidates(candidates []discover.CandidateSource) config.Config {
+	enabled := false
+	cfg := config.Config{Sources: make([]config.SourceConfig, 0)}
+	for _, candidate := range candidates {
+		if candidate.Status != discover.StatusValid || candidate.AdapterRequired || candidate.URL == "" {
+			continue
+		}
+		sourceType, ok := sourceTypeForCandidate(candidate)
+		if !ok {
+			continue
+		}
+		protocolHint := candidate.ProtocolHint
+		if protocolHint == "" && candidate.Recipe != nil {
+			protocolHint = candidate.Recipe.ProtocolHint
+		}
+		item := config.SourceConfig{
+			Name:         candidateSourceName(candidate, len(cfg.Sources)+1),
+			Type:         sourceType,
+			URL:          candidate.URL,
+			ProtocolHint: protocolHint,
+			Enabled:      &enabled,
+		}
+		if sourceType == "json_url" || sourceType == "api_url" {
+			item.JSON = &source.JSONConfig{}
+		}
+		cfg.Sources = append(cfg.Sources, item)
+	}
+	return cfg
+}
+
+func sourceTypeForCandidate(candidate discover.CandidateSource) (string, bool) {
+	kind := candidate.SourceKind
+	if candidate.Recipe != nil && candidate.Recipe.Kind != "" {
+		kind = candidate.Recipe.Kind
+	}
+	switch kind {
+	case discover.KindRawText:
+		return "raw_text_url", true
+	case discover.KindJSON:
+		return "json_url", true
+	case discover.KindAPI:
+		return "api_url", true
+	default:
+		return "", false
+	}
+}
+
+func candidateSourceName(candidate discover.CandidateSource, index int) string {
+	if candidate.Name != "" {
+		return slug(candidate.Name)
+	}
+	parsed, err := url.Parse(candidate.URL)
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Sprintf("candidate-%d", index)
+	}
+	base := strings.TrimSuffix(path.Base(parsed.Path), path.Ext(parsed.Path))
+	if base == "." || base == "/" || base == "" {
+		base = "source"
+	}
+	return slug(parsed.Hostname() + "-" + base)
+}
+
+func slug(value string) string {
+	value = strings.ToLower(value)
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range value {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	result := strings.Trim(builder.String(), "-")
+	if result == "" {
+		return "candidate"
+	}
+	return result
 }

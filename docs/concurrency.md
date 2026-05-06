@@ -292,16 +292,15 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 - 已增加 `check-ttl`，跳过最近检测过的代理。
 - 已增加 `max-checks`，限制单轮检测规模。
 - 已增加检测调度统计：`scheduled`、`skipped_recent`、`skipped_limit`。
-- refresh/status 增加阶段和进度。
-- doctor/source report 增加源级耗时与错误汇总。
+- 已增强 refresh/status 阶段、进度、取消和跳过原因。
+- 已增加 source 冷却、host 级并发限制和错误分类报告。
+- 已增强 doctor/source report 源级耗时与错误汇总。
 
 ### P1：稳定高并发
 
-- 增加源级连续失败计数和冷却。
-- 增加 host 级并发限制。
-- 检测结果错误分类。
 - HTTP Transport 参数集中配置。
 - cache 写入改为临时文件加 rename。
+- source 级熔断半开试探和更细的错误退避策略。
 
 ### P2：调度优化
 

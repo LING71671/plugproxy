@@ -163,3 +163,42 @@ func TestTriggerRefreshMarksManualReason(t *testing.T) {
 		t.Fatalf("expected manual reason, got %#v", status)
 	}
 }
+
+func TestRefreshStatusReportsRunningPhaseAndProgress(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	application := NewWithSources(slog.Default(), []source.Source{
+		blockingSource{name: "block", started: started, release: release},
+	})
+	status := application.TriggerRefresh(context.Background(), RefreshOptions{
+		Fetch: FetchOptions{Workers: 1, CachePath: filepath.Join(t.TempDir(), "cache.json"), CacheWrite: false},
+		Check: CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}},
+	})
+	if !status.Running || status.Phase != "fetching" {
+		t.Fatalf("unexpected initial status %#v", status)
+	}
+	<-started
+
+	running := application.RefreshStatus()
+	if !running.Running || running.Phase == "" || running.Progress.TotalSources != 1 {
+		close(release)
+		t.Fatalf("expected running refresh progress, got %#v", running)
+	}
+	close(release)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		current := application.RefreshStatus()
+		if current.Status == "completed" {
+			if current.Phase != "completed" || current.Progress.CompletedSources != 1 || current.Check.Scheduled != 1 {
+				t.Fatalf("unexpected completed status %#v", current)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not complete, last status %#v", current)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}

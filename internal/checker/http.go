@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LING71671/plugproxy/internal/errtype"
 	"github.com/LING71671/plugproxy/pkg/model"
 	xproxy "golang.org/x/net/proxy"
 )
@@ -34,16 +35,18 @@ func (c HTTPChecker) Check(ctx context.Context, proxy model.Proxy) Result {
 	case model.ProtocolSOCKS5:
 		return c.checkSOCKS5Proxy(ctx, proxy)
 	case model.ProtocolSOCKS4:
-		return Result{Proxy: proxy, Unsupported: true, Error: fmt.Errorf("unsupported protocol: %s", proxy.Protocol)}
+		err := fmt.Errorf("unsupported protocol: %s", proxy.Protocol)
+		return Result{Proxy: proxy, Unsupported: true, Error: err, ErrorType: errtype.ProtocolUnsupported}
 	default:
-		return Result{Proxy: proxy, Unsupported: true, Error: fmt.Errorf("unsupported protocol: %s", proxy.Protocol)}
+		err := fmt.Errorf("unsupported protocol: %s", proxy.Protocol)
+		return Result{Proxy: proxy, Unsupported: true, Error: err, ErrorType: errtype.ProtocolUnsupported}
 	}
 }
 
 func (c HTTPChecker) checkHTTPProxy(ctx context.Context, proxy model.Proxy) Result {
 	proxyURL, err := proxy.URL()
 	if err != nil {
-		return Result{Proxy: proxy, Error: err}
+		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ParseError}
 	}
 
 	client := &http.Client{
@@ -55,25 +58,29 @@ func (c HTTPChecker) checkHTTPProxy(ctx context.Context, proxy model.Proxy) Resu
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.TargetURL, nil)
 	if err != nil {
-		return Result{Proxy: proxy, Error: err}
+		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ParseError}
 	}
 
 	start := time.Now()
 	resp, err := client.Do(req)
 	latency := time.Since(start)
 	if err != nil {
-		return Result{Proxy: proxy, Latency: latency, Error: err}
+		return Result{Proxy: proxy, Latency: latency, Error: err, ErrorType: errtype.Classify(err)}
 	}
 	defer resp.Body.Close()
 
 	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
-	return Result{Proxy: proxy, OK: ok, Latency: latency}
+	if !ok {
+		err := fmt.Errorf("target returned %s", resp.Status)
+		return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.ResponseError}
+	}
+	return Result{Proxy: proxy, OK: true, Latency: latency}
 }
 
 func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Result {
 	dialer, err := xproxy.SOCKS5("tcp", proxy.Address, nil, xproxy.Direct)
 	if err != nil {
-		return Result{Proxy: proxy, Error: err}
+		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ConnectionError}
 	}
 
 	client := &http.Client{
@@ -87,19 +94,23 @@ func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Re
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.TargetURL, nil)
 	if err != nil {
-		return Result{Proxy: proxy, Error: err}
+		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ParseError}
 	}
 
 	start := time.Now()
 	resp, err := client.Do(req)
 	latency := time.Since(start)
 	if err != nil {
-		return Result{Proxy: proxy, Latency: latency, Error: err}
+		return Result{Proxy: proxy, Latency: latency, Error: err, ErrorType: errtype.Classify(err)}
 	}
 	defer resp.Body.Close()
 
 	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
-	return Result{Proxy: proxy, OK: ok, Latency: latency}
+	if !ok {
+		err := fmt.Errorf("target returned %s", resp.Status)
+		return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.ResponseError}
+	}
+	return Result{Proxy: proxy, OK: true, Latency: latency}
 }
 
 func dialWithContext(ctx context.Context, dialer xproxy.Dialer, network, address string) (net.Conn, error) {

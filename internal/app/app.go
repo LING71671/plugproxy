@@ -12,6 +12,7 @@ import (
 	"github.com/LING71671/plugproxy/internal/cache"
 	"github.com/LING71671/plugproxy/internal/checker"
 	"github.com/LING71671/plugproxy/internal/config"
+	"github.com/LING71671/plugproxy/internal/errtype"
 	"github.com/LING71671/plugproxy/internal/fetcher"
 	"github.com/LING71671/plugproxy/internal/pool"
 	"github.com/LING71671/plugproxy/internal/scheduler"
@@ -27,13 +28,19 @@ type App struct {
 	reportMu        sync.RWMutex
 	lastFetchReport FetchReport
 	refresh         refreshState
+	sourceMu        sync.Mutex
+	sourceStates    map[string]SourceState
 }
 
 type FetchOptions struct {
-	Workers       int
-	CachePath     string
-	CacheFallback bool
-	CacheWrite    bool
+	Workers                int
+	PerHostWorkers         int
+	SourceFailureThreshold int
+	SourceCooldown         time.Duration
+	CachePath              string
+	CacheFallback          bool
+	CacheWrite             bool
+	Progress               func(PipelineProgress)
 }
 
 type CheckOptions struct {
@@ -51,6 +58,7 @@ type FetchReport struct {
 	TotalSources      int                 `json:"total_sources"`
 	SuccessfulSources int                 `json:"successful_sources"`
 	FailedSources     int                 `json:"failed_sources"`
+	SkippedSources    int                 `json:"skipped_sources"`
 	Fetched           int                 `json:"fetched"`
 	Added             int                 `json:"added"`
 	Duplicates        int                 `json:"duplicates"`
@@ -66,19 +74,22 @@ type SourceFetchReport struct {
 	Status     string `json:"status"`
 	Count      int    `json:"count"`
 	Error      string `json:"error,omitempty"`
+	ErrorType  string `json:"error_type,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
+	SourceState
 }
 
 type CheckStats struct {
-	Total         int `json:"total"`
-	Scheduled     int `json:"scheduled"`
-	SkippedRecent int `json:"skipped_recent"`
-	SkippedLimit  int `json:"skipped_limit"`
-	Healthy       int `json:"healthy"`
-	Degraded      int `json:"degraded"`
-	Dead          int `json:"dead"`
-	Unsupported   int `json:"unsupported"`
-	Failed        int `json:"failed"`
+	Total         int            `json:"total"`
+	Scheduled     int            `json:"scheduled"`
+	SkippedRecent int            `json:"skipped_recent"`
+	SkippedLimit  int            `json:"skipped_limit"`
+	Healthy       int            `json:"healthy"`
+	Degraded      int            `json:"degraded"`
+	Dead          int            `json:"dead"`
+	Unsupported   int            `json:"unsupported"`
+	Failed        int            `json:"failed"`
+	ErrorTypes    map[string]int `json:"error_types,omitempty"`
 }
 
 type PipelineReport struct {
@@ -86,6 +97,25 @@ type PipelineReport struct {
 	FinishedAt time.Time   `json:"finished_at,omitempty"`
 	Fetch      FetchReport `json:"fetch"`
 	Check      CheckStats  `json:"check"`
+}
+
+type PipelineProgress struct {
+	Phase    string          `json:"phase"`
+	Progress RefreshProgress `json:"progress"`
+}
+
+type RefreshProgress struct {
+	TotalSources     int `json:"total_sources"`
+	CompletedSources int `json:"completed_sources"`
+	ScheduledChecks  int `json:"scheduled_checks"`
+	CompletedChecks  int `json:"completed_checks"`
+}
+
+type SourceState struct {
+	LastSuccessAt       time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt       time.Time `json:"last_failure_at,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
+	CooldownUntil       time.Time `json:"cooldown_until,omitempty"`
 }
 
 func New(log *slog.Logger) *App {
@@ -105,9 +135,10 @@ func NewWithSources(log *slog.Logger, sources []source.Source) *App {
 	}
 
 	return &App{
-		pool:    pool.NewMemory(),
-		sources: sources,
-		log:     log,
+		pool:         pool.NewMemory(),
+		sources:      sources,
+		log:          log,
+		sourceStates: make(map[string]SourceState),
 	}
 }
 
@@ -125,12 +156,7 @@ func (a *App) FetchWithWorkers(ctx context.Context, workers int) int {
 }
 
 func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchReport {
-	if options.Workers <= 0 {
-		options.Workers = len(a.sources)
-	}
-	if options.CachePath == "" {
-		options.CachePath = cache.DefaultPath
-	}
+	options = normalizeFetchOptions(options, len(a.sources))
 
 	count := 0
 	report := FetchReport{
@@ -138,6 +164,9 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 		CachePath:    options.CachePath,
 		Sources:      make([]SourceFetchReport, 0, len(a.sources)),
 	}
+	activeSources, skippedReports := a.activeSources(options)
+	report.Sources = append(report.Sources, skippedReports...)
+	report.SkippedSources += len(skippedReports)
 	if options.CacheFallback || options.CacheWrite {
 		proxies, err := cache.Load(options.CachePath)
 		if err == nil {
@@ -152,16 +181,18 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 	}
 
 	seen := make(map[string]struct{})
-	for _, result := range fetcher.FetchAllWithWorkers(ctx, a.sources, options.Workers) {
+	for _, result := range fetcher.FetchAllWithOptions(ctx, activeSources, fetcher.Options{Workers: options.Workers, PerHostWorkers: options.PerHostWorkers}) {
 		sourceReport := SourceFetchReport{
 			Name:       result.Source,
 			Count:      len(result.Proxies),
+			ErrorType:  string(result.ErrorType),
 			DurationMS: result.Duration.Milliseconds(),
 		}
 		if result.Error != nil {
 			report.FailedSources++
 			sourceReport.Status = "failed"
 			sourceReport.Error = result.Error.Error()
+			sourceReport.SourceState = a.recordSourceResult(result.Source, false, options)
 			report.Sources = append(report.Sources, sourceReport)
 			a.log.Warn("source fetch failed", "source", result.Source, "error", result.Error)
 			continue
@@ -170,6 +201,7 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 		report.SuccessfulSources++
 		report.Fetched += len(result.Proxies)
 		sourceReport.Status = "ok"
+		sourceReport.SourceState = a.recordSourceResult(result.Source, true, options)
 		report.Sources = append(report.Sources, sourceReport)
 		for _, proxy := range result.Proxies {
 			if proxy.ID == "" {
@@ -212,9 +244,7 @@ func (a *App) FetchWithOptions(ctx context.Context, options FetchOptions) FetchR
 }
 
 func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptions, checkOptions CheckOptions) PipelineReport {
-	if fetchOptions.Workers <= 0 {
-		fetchOptions.Workers = len(a.sources)
-	}
+	fetchOptions = normalizeFetchOptions(fetchOptions, len(a.sources))
 	if checkOptions.Workers <= 0 {
 		checkOptions.Workers = 32
 	}
@@ -236,10 +266,25 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 			Sources:      make([]SourceFetchReport, 0, len(a.sources)),
 		},
 	}
+	activeSources, skippedReports := a.activeSources(fetchOptions)
+	report.Fetch.Sources = append(report.Fetch.Sources, skippedReports...)
+	report.Fetch.SkippedSources += len(skippedReports)
 
 	seenFetched := make(map[string]struct{})
 	seenChecks := make(map[string]struct{})
 	scheduleStats := CheckStats{}
+	progress := RefreshProgress{TotalSources: len(a.sources), CompletedSources: len(skippedReports)}
+	var progressMu sync.Mutex
+	emitProgress := func(phase string) {
+		if fetchOptions.Progress == nil {
+			return
+		}
+		progressMu.Lock()
+		value := progress
+		progressMu.Unlock()
+		fetchOptions.Progress(PipelineProgress{Phase: phase, Progress: value})
+	}
+	emitProgress("fetching")
 
 	checkJobs := make(chan model.Proxy, max(1, checkOptions.Workers*4))
 	checkResults := make(chan checker.Result, max(1, checkOptions.Workers*4))
@@ -270,6 +315,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 			} else if !result.OK {
 				stats.Failed++
 			}
+			addErrorType(&stats, result.ErrorType)
 			switch checked.HealthStatus {
 			case model.HealthHealthy:
 				stats.Healthy++
@@ -279,6 +325,10 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 				stats.Dead++
 			}
 			a.pool.Add(checked)
+			progressMu.Lock()
+			progress.CompletedChecks++
+			progressMu.Unlock()
+			emitProgress("checking")
 		}
 		outcomes <- stats
 	}()
@@ -331,6 +381,10 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 		scheduleStats.Scheduled += schedule.Stats.Selected
 		scheduleStats.SkippedRecent += schedule.Stats.SkippedRecent
 		scheduleStats.SkippedLimit += schedule.Stats.SkippedLimit
+		progressMu.Lock()
+		progress.ScheduledChecks += schedule.Stats.Selected
+		progressMu.Unlock()
+		emitProgress("fetching")
 		for _, proxy := range schedule.Selected {
 			select {
 			case <-ctx.Done():
@@ -351,24 +405,31 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 		return report
 	}
 
-	for result := range fetcher.FetchStreamWithWorkers(ctx, a.sources, fetchOptions.Workers) {
+	for result := range fetcher.FetchStreamWithOptions(ctx, activeSources, fetcher.Options{Workers: fetchOptions.Workers, PerHostWorkers: fetchOptions.PerHostWorkers}) {
 		sourceReport := SourceFetchReport{
 			Name:       result.Source,
 			Count:      len(result.Proxies),
+			ErrorType:  string(result.ErrorType),
 			DurationMS: result.Duration.Milliseconds(),
 		}
+		progressMu.Lock()
+		progress.CompletedSources++
+		progressMu.Unlock()
 		if result.Error != nil {
 			report.Fetch.FailedSources++
 			sourceReport.Status = "failed"
 			sourceReport.Error = result.Error.Error()
+			sourceReport.SourceState = a.recordSourceResult(result.Source, false, fetchOptions)
 			report.Fetch.Sources = append(report.Fetch.Sources, sourceReport)
 			a.log.Warn("source fetch failed", "source", result.Source, "error", result.Error)
+			emitProgress("fetching")
 			continue
 		}
 
 		report.Fetch.SuccessfulSources++
 		report.Fetch.Fetched += len(result.Proxies)
 		sourceReport.Status = "ok"
+		sourceReport.SourceState = a.recordSourceResult(result.Source, true, fetchOptions)
 		report.Fetch.Sources = append(report.Fetch.Sources, sourceReport)
 		checkCandidates := make([]model.Proxy, 0, len(result.Proxies))
 		for _, proxy := range result.Proxies {
@@ -387,6 +448,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 		if !submitChecks(checkCandidates) {
 			break
 		}
+		emitProgress("fetching")
 	}
 
 	if report.Fetch.Added == 0 && fetchOptions.CacheFallback && report.Fetch.CacheCount > 0 {
@@ -395,11 +457,13 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 	}
 
 	close(checkJobs)
+	emitProgress("checking")
 	checkWG.Wait()
 	close(checkResults)
 	report.Check = combineCheckStats(scheduleStats, <-outcomes)
 
 	if fetchOptions.CacheWrite || checkOptions.CacheWrite {
+		emitProgress("saving")
 		if err := cache.Save(cachePath, a.pool.List(pool.Filter{})); err != nil {
 			report.Fetch.CacheError = err.Error()
 			a.log.Warn("proxy cache write failed", "path", cachePath, "error", err)
@@ -467,6 +531,7 @@ func combineCheckStats(schedule CheckStats, outcomes CheckStats) CheckStats {
 		Dead:          outcomes.Dead,
 		Unsupported:   outcomes.Unsupported,
 		Failed:        outcomes.Failed,
+		ErrorTypes:    outcomes.ErrorTypes,
 	}
 }
 
@@ -519,6 +584,7 @@ func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, 
 		} else if !result.OK {
 			stats.Failed++
 		}
+		addErrorType(&stats, result.ErrorType)
 		switch proxy.HealthStatus {
 		case model.HealthHealthy:
 			stats.Healthy++
@@ -531,6 +597,16 @@ func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, 
 	}
 
 	return stats
+}
+
+func addErrorType(stats *CheckStats, kind errtype.Type) {
+	if kind == "" {
+		return
+	}
+	if stats.ErrorTypes == nil {
+		stats.ErrorTypes = make(map[string]int)
+	}
+	stats.ErrorTypes[string(kind)]++
 }
 
 func proxyID(proxy model.Proxy) string {
@@ -554,6 +630,72 @@ func matchesFilter(proxy model.Proxy, filter pool.Filter) bool {
 		return false
 	}
 	return true
+}
+
+func normalizeFetchOptions(options FetchOptions, sourceCount int) FetchOptions {
+	if options.Workers <= 0 {
+		options.Workers = sourceCount
+	}
+	if options.CachePath == "" {
+		options.CachePath = cache.DefaultPath
+	}
+	if options.PerHostWorkers == 0 {
+		options.PerHostWorkers = 4
+	}
+	if options.SourceFailureThreshold == 0 {
+		options.SourceFailureThreshold = 3
+	}
+	if options.SourceCooldown == 0 {
+		options.SourceCooldown = 15 * time.Minute
+	}
+	return options
+}
+
+func (a *App) activeSources(options FetchOptions) ([]source.Source, []SourceFetchReport) {
+	now := time.Now()
+	active := make([]source.Source, 0, len(a.sources))
+	skipped := make([]SourceFetchReport, 0)
+	for _, src := range a.sources {
+		state := a.sourceState(src.Name())
+		if !state.CooldownUntil.IsZero() && now.Before(state.CooldownUntil) {
+			skipped = append(skipped, SourceFetchReport{
+				Name:        src.Name(),
+				Status:      "skipped_cooldown",
+				SourceState: state,
+			})
+			continue
+		}
+		active = append(active, src)
+	}
+	return active, skipped
+}
+
+func (a *App) sourceState(name string) SourceState {
+	a.sourceMu.Lock()
+	defer a.sourceMu.Unlock()
+	return a.sourceStates[name]
+}
+
+func (a *App) recordSourceResult(name string, ok bool, options FetchOptions) SourceState {
+	now := time.Now()
+	a.sourceMu.Lock()
+	defer a.sourceMu.Unlock()
+	state := a.sourceStates[name]
+	if ok {
+		state.LastSuccessAt = now
+		state.ConsecutiveFailures = 0
+		state.CooldownUntil = time.Time{}
+	} else {
+		state.LastFailureAt = now
+		state.ConsecutiveFailures++
+		if options.SourceFailureThreshold > 0 &&
+			state.ConsecutiveFailures >= options.SourceFailureThreshold &&
+			options.SourceCooldown > 0 {
+			state.CooldownUntil = now.Add(options.SourceCooldown)
+		}
+	}
+	a.sourceStates[name] = state
+	return state
 }
 
 func (a *App) Pool() pool.Pool {

@@ -6,14 +6,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LING71671/plugproxy/internal/hostlimit"
 	"github.com/LING71671/plugproxy/internal/source"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
 type Validator struct {
-	http     HTTPClient
-	analyzer Analyzer
-	workers  int
+	http           HTTPClient
+	analyzer       Analyzer
+	workers        int
+	perHostWorkers int
+}
+
+type ValidatorOptions struct {
+	Timeout        time.Duration
+	Workers        int
+	PerHostWorkers int
 }
 
 func NewValidator(timeout time.Duration, workers ...int) Validator {
@@ -21,10 +29,19 @@ func NewValidator(timeout time.Duration, workers ...int) Validator {
 	if len(workers) > 0 && workers[0] > 0 {
 		workerCount = workers[0]
 	}
+	return NewValidatorWithOptions(ValidatorOptions{Timeout: timeout, Workers: workerCount})
+}
+
+func NewValidatorWithOptions(options ValidatorOptions) Validator {
+	workerCount := options.Workers
+	if workerCount <= 0 {
+		workerCount = 32
+	}
 	return Validator{
-		http:     NewHTTPClient(timeout, defaultSampleLimit),
-		analyzer: NewAnalyzer(),
-		workers:  workerCount,
+		http:           NewHTTPClient(options.Timeout, defaultSampleLimit),
+		analyzer:       NewAnalyzer(),
+		workers:        workerCount,
+		perHostWorkers: options.PerHostWorkers,
 	}
 }
 
@@ -40,13 +57,25 @@ func (v Validator) Validate(ctx context.Context, candidates []CandidateSource) [
 
 	jobs := make(chan CandidateSource)
 	results := make(chan CandidateSource)
+	limiter := hostlimit.New(v.perHostWorkers)
 	var wg sync.WaitGroup
 	for range workerCount {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for candidate := range jobs {
-				results <- v.validateOne(ctx, candidate)
+				release, ok := limiter.Acquire(ctx, candidate.URL)
+				if !ok {
+					candidate.Status = StatusInvalid
+					if ctx.Err() != nil {
+						candidate.Error = ctx.Err().Error()
+					}
+					results <- candidate
+					continue
+				}
+				validated := v.validateOne(ctx, candidate)
+				release()
+				results <- validated
 			}
 		}()
 	}

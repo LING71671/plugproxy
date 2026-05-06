@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LING71671/plugproxy/internal/errtype"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
@@ -60,14 +61,18 @@ func (s RawTextURLSource) Name() string {
 	return s.rawURL
 }
 
+func (s RawTextURLSource) SourceURL() string {
+	return s.rawURL
+}
+
 func (s RawTextURLSource) Fetch(ctx context.Context) ([]model.Proxy, error) {
 	if s.rawURL == "" {
-		return nil, fmt.Errorf("raw text source %q has empty URL", s.Name())
+		return nil, errtype.Wrap(errtype.ParseError, fmt.Errorf("raw text source %q has empty URL", s.Name()))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.rawURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, errtype.Wrap(errtype.ParseError, err)
 	}
 	req.Header.Set("User-Agent", "plugproxy/0.1")
 
@@ -77,14 +82,29 @@ func (s RawTextURLSource) Fetch(ctx context.Context) ([]model.Proxy, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("source %q returned %s", s.Name(), resp.Status)
+		return nil, errtype.Wrap(errtype.HTTPStatus, fmt.Errorf("source %q returned %s", s.Name(), resp.Status))
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, s.bodyLimit))
+	data, err := readLimited(resp.Body, s.bodyLimit)
 	if err != nil {
 		return nil, err
 	}
 	return ParseRawTextProxies(string(data), s.protocolHint, s.Name()), nil
+}
+
+func readLimited(reader io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return io.ReadAll(reader)
+	}
+	limited := &io.LimitedReader{R: reader, N: limit + 1}
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, errtype.Wrap(errtype.BodyLimit, fmt.Errorf("source body exceeds limit %d", limit))
+	}
+	return data, nil
 }
 
 func ParseRawTextProxies(content string, protocolHint model.Protocol, sourceName string) []model.Proxy {

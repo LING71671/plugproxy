@@ -13,6 +13,7 @@
 - 支持纯文本代理列表。
 - 支持 GitHub Raw 代理源。
 - 支持 JSON 代理源。
+- 支持公开 JSON API 源和请求头配置。
 - 支持从配置文件加载代理源。
 - 增加代理去重和基础格式归一化。
 - 增加 `discover` 体系，支持 GitHub、Raw URL 和可选 AI 搜索发现候选代理源。
@@ -38,7 +39,7 @@
 - 增加 `plugproxy init` 和 `plugproxy doctor`，降低上手和排错成本。
 - 增加后台自动刷新和异步 `POST /refresh` 触发接口。
 - 增加 HTTP Client SDK、嵌入式 SDK、`/stats` 和 `plugproxy stats`。
-- 增加 v0.1.0 tag release、跨平台二进制和 checksums。
+- 增加 v0.2.0 tag release、跨平台二进制和 checksums。
 
 ## 第五阶段：管理与可视化
 
@@ -48,10 +49,11 @@
 
 ## 横向主题：并发能力
 
-- 增加 `check-ttl` 和 `max-checks`，减少无意义全量检测。
-- 增加源级失败统计、冷却和 host 级并发限制。
-- 增强 refresh 状态，暴露阶段、进度、耗时和取消状态。
-- 对检测错误分类，区分超时、连接错误、协议不支持和响应异常。
+- 已增加 `check-ttl` 和 `max-checks`，减少无意义全量检测。
+- 已增加源级失败统计、冷却和 host 级并发限制。
+- 已增强 refresh 状态，暴露阶段、进度、耗时和取消状态。
+- 已对源抓取和检测错误分类，区分超时、连接错误、协议不支持和响应异常。
+- 已支持 `discover validate -write-sources` 导出待人工确认的源配置。
 - 后续按健康状态、检测过期时间和协议进行调度优化。
 
 详细设计见 [并发能力设计备忘](concurrency.md)。

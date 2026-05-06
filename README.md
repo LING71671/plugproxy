@@ -2,7 +2,7 @@
 
 plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池管理和接入工具。
 
-> 当前状态：v0.1.0 可用预览版。
+> 当前状态：v0.2.0 可用预览版。
 
 ## 目标
 
@@ -36,10 +36,10 @@ go run ./cmd/plugproxy doctor
 ```bash
 plugproxy init
 plugproxy doctor
-plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
+plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json
 plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
 plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
-plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m
+plugproxy run -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m
 ```
 
 Go 项目接入见 [Go SDK 接入](docs/sdk.md)。
@@ -109,16 +109,16 @@ plugproxy 的核心原则是“发现候选源”和“使用可用代理”分�
 go run ./cmd/plugproxy version
 go run ./cmd/plugproxy init
 go run ./cmd/plugproxy doctor
-go run ./cmd/plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
+go run ./cmd/plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
 go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
-go run ./cmd/plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
-go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 0 -check-ttl 0s
+go run ./cmd/plugproxy check -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
+go run ./cmd/plugproxy run -source-workers 32 -per-host-workers 4 -source-cooldown 15m -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 0 -check-ttl 0s
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
-go run ./cmd/plugproxy discover validate candidates.json -workers 128
+go run ./cmd/plugproxy discover validate candidates.json -workers 128 -per-host-workers 4 -write-sources plugproxy.sources.candidates.json
 ```
 
 运行后可用的 HTTP API：
@@ -192,13 +192,15 @@ JSON/API 字段映射可用 `json.items_path`、`json.proxy_field`、`json.host_
 
 `fetch/list/get/check/run` 默认会把成功采集到的代理写入 `.plugproxy.cache.json`。当一轮采集所有源都失败时，会自动回退读取缓存，避免免费源短暂超时导致代理池为空。
 
-`fetch` 会输出本轮源级采集报告，包括成功源、失败源、去重数量、缓存是否被复用和每个源耗时。HTTP API 的 `GET /sources` 会返回最近一次采集报告。
+`fetch` 会输出本轮源级采集报告，包括成功源、失败源、冷却跳过源、去重数量、错误分类、缓存是否被复用和每个源耗时。连续失败源会进入短期冷却，同一 host 的源请求也会受 `-per-host-workers` 限制。HTTP API 的 `GET /sources` 会返回最近一次采集报告。
 
 缓存也会保留检测后的健康字段。缓存中的代理与新采集代理按 `protocol://address` 合并；新代理首次出现时初始化为 `unchecked` 和 50 分，已存在代理再次出现时保留历史健康评分。
 
 ## 自动刷新
 
 `run` 默认开启动态刷新控制器。`-refresh-interval` 是基础间隔，不是写死节拍；控制器会根据健康代理水位、unchecked 积压、上一轮失败情况和抖动计算下一次刷新。刷新会在源返回后尽快去重、调度检测并入池，不必等待所有源都抓取完成；最终仍只写一次 cache。可用 `-refresh=false` 关闭，或用 `-refresh-min-interval`、`-refresh-max-interval`、`-min-healthy` 等参数调整策略。
+
+`GET /refresh` 会显示当前 `phase`、进度、跳过原因、下一次刷新时间和最近一次 pipeline 报告；重复 `POST /refresh` 不会重入正在运行的 refresh。
 
 刷新任务串行执行，上一轮未结束时会跳过新一轮。HTTP API 提供：
 

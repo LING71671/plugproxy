@@ -162,6 +162,9 @@ func TestCheckWithOptionsWritesCache(t *testing.T) {
 	if stats.Unsupported != 1 {
 		t.Fatalf("expected 1 unsupported proxy, got %d", stats.Unsupported)
 	}
+	if stats.ErrorTypes["protocol_unsupported"] != 1 {
+		t.Fatalf("expected protocol_unsupported error type, got %#v", stats.ErrorTypes)
+	}
 
 	loaded, err := cache.Load(path)
 	if err != nil {
@@ -355,6 +358,47 @@ func TestFetchCheckWithOptionsUsesCacheWhenSourcesFail(t *testing.T) {
 	}
 }
 
+func TestFetchWithOptionsSkipsSourceDuringCooldown(t *testing.T) {
+	application := NewWithSources(slog.Default(), []source.Source{failingSource{name: "fail"}})
+	options := FetchOptions{
+		Workers:                1,
+		CachePath:              filepath.Join(t.TempDir(), "cache.json"),
+		CacheFallback:          false,
+		CacheWrite:             false,
+		SourceFailureThreshold: 1,
+		SourceCooldown:         time.Hour,
+	}
+
+	first := application.FetchWithOptions(context.Background(), options)
+	if first.FailedSources != 1 || first.SkippedSources != 0 {
+		t.Fatalf("unexpected first report %#v", first)
+	}
+
+	second := application.FetchWithOptions(context.Background(), options)
+	if second.FailedSources != 0 || second.SkippedSources != 1 || second.Sources[0].Status != "skipped_cooldown" {
+		t.Fatalf("unexpected cooldown report %#v", second)
+	}
+}
+
+func TestFetchWithOptionsUsesSourceAfterCooldownExpires(t *testing.T) {
+	application := NewWithSources(slog.Default(), []source.Source{failingSource{name: "fail"}})
+	options := FetchOptions{
+		Workers:                1,
+		CachePath:              filepath.Join(t.TempDir(), "cache.json"),
+		CacheFallback:          false,
+		CacheWrite:             false,
+		SourceFailureThreshold: 1,
+		SourceCooldown:         time.Millisecond,
+	}
+
+	application.FetchWithOptions(context.Background(), options)
+	time.Sleep(5 * time.Millisecond)
+	report := application.FetchWithOptions(context.Background(), options)
+	if report.FailedSources != 1 || report.SkippedSources != 0 {
+		t.Fatalf("expected source to run after cooldown, got %#v", report)
+	}
+}
+
 func TestTriggerRefreshSkipsWhenAlreadyRunning(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -370,7 +414,7 @@ func TestTriggerRefreshSkipsWhenAlreadyRunning(t *testing.T) {
 	}
 	<-started
 	second := application.TriggerRefresh(context.Background(), options)
-	if !second.Running || second.SkippedAt.IsZero() {
+	if second.Status != "skipped" || second.Running || second.SkippedAt.IsZero() || second.SkippedReason != "already_running" {
 		t.Fatalf("expected second refresh to be skipped while running, got %#v", second)
 	}
 

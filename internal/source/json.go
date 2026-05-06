@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/LING71671/plugproxy/internal/errtype"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
@@ -78,14 +78,18 @@ func (s JSONURLSource) Name() string {
 	return s.rawURL
 }
 
+func (s JSONURLSource) SourceURL() string {
+	return s.rawURL
+}
+
 func (s JSONURLSource) Fetch(ctx context.Context) ([]model.Proxy, error) {
 	if s.rawURL == "" {
-		return nil, fmt.Errorf("json source %q has empty URL", s.Name())
+		return nil, errtype.Wrap(errtype.ParseError, fmt.Errorf("json source %q has empty URL", s.Name()))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.rawURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, errtype.Wrap(errtype.ParseError, err)
 	}
 	req.Header.Set("User-Agent", "plugproxy/0.1")
 	for key, value := range s.headers {
@@ -98,10 +102,10 @@ func (s JSONURLSource) Fetch(ctx context.Context) ([]model.Proxy, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("source %q returned %s", s.Name(), resp.Status)
+		return nil, errtype.Wrap(errtype.HTTPStatus, fmt.Errorf("source %q returned %s", s.Name(), resp.Status))
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, s.bodyLimit))
+	data, err := readLimited(resp.Body, s.bodyLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +115,7 @@ func (s JSONURLSource) Fetch(ctx context.Context) ([]model.Proxy, error) {
 func ParseJSONProxies(data []byte, protocolHint model.Protocol, sourceName string, config JSONConfig) ([]model.Proxy, error) {
 	var root any
 	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, err
+		return nil, errtype.Wrap(errtype.ParseError, err)
 	}
 
 	items, ok := jsonItems(root, config.ItemsPath)

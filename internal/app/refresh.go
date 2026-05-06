@@ -35,18 +35,22 @@ type RefreshDecision struct {
 }
 
 type RefreshStatus struct {
-	Status     string         `json:"status"`
-	Running    bool           `json:"running"`
-	StartedAt  time.Time      `json:"started_at,omitempty"`
-	FinishedAt time.Time      `json:"finished_at,omitempty"`
-	SkippedAt  time.Time      `json:"skipped_at,omitempty"`
-	NextAt     time.Time      `json:"next_at,omitempty"`
-	LastReason string         `json:"last_reason,omitempty"`
-	Policy     RefreshPolicy  `json:"policy,omitempty"`
-	Fetch      FetchReport    `json:"fetch,omitempty"`
-	Check      CheckStats     `json:"check,omitempty"`
-	Pipeline   PipelineReport `json:"pipeline,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	Status        string          `json:"status"`
+	Running       bool            `json:"running"`
+	Phase         string          `json:"phase,omitempty"`
+	Progress      RefreshProgress `json:"progress,omitempty"`
+	StartedAt     time.Time       `json:"started_at,omitempty"`
+	FinishedAt    time.Time       `json:"finished_at,omitempty"`
+	SkippedAt     time.Time       `json:"skipped_at,omitempty"`
+	SkippedReason string          `json:"skipped_reason,omitempty"`
+	Cancelled     bool            `json:"cancelled,omitempty"`
+	NextAt        time.Time       `json:"next_at,omitempty"`
+	LastReason    string          `json:"last_reason,omitempty"`
+	Policy        RefreshPolicy   `json:"policy,omitempty"`
+	Fetch         FetchReport     `json:"fetch,omitempty"`
+	Check         CheckStats      `json:"check,omitempty"`
+	Pipeline      PipelineReport  `json:"pipeline,omitempty"`
+	Error         string          `json:"error,omitempty"`
 }
 
 type refreshState struct {
@@ -107,18 +111,26 @@ func (a *App) startRefresh(ctx context.Context, options RefreshOptions, reason s
 	a.refresh.mu.Lock()
 	if a.refresh.running {
 		status := a.refresh.status
+		status.Status = "skipped"
+		status.Running = false
 		status.SkippedAt = now
+		status.SkippedReason = "already_running"
 		status.LastReason = reason
 		status.Policy = options.Policy
-		a.refresh.status = status
 		a.refresh.mu.Unlock()
 		return status, false
 	}
 	status := a.refresh.status
 	status.Status = "running"
 	status.Running = true
+	status.Phase = "fetching"
+	status.Progress = RefreshProgress{TotalSources: len(a.sources)}
 	status.StartedAt = now
 	status.FinishedAt = time.Time{}
+	status.SkippedAt = time.Time{}
+	status.SkippedReason = ""
+	status.Cancelled = false
+	status.Error = ""
 	status.LastReason = reason
 	status.Policy = options.Policy
 	a.refresh.running = true
@@ -130,16 +142,26 @@ func (a *App) startRefresh(ctx context.Context, options RefreshOptions, reason s
 }
 
 func (a *App) runRefresh(ctx context.Context, options RefreshOptions) {
-	status := RefreshStatus{Status: "running", Running: true, StartedAt: time.Now()}
+	startedAt := time.Now()
 	options.Policy = defaultRefreshPolicy(options.Policy.BaseInterval, options.Policy)
+	options.Fetch.Progress = func(update PipelineProgress) {
+		a.updateRefreshProgress(update)
+	}
 	pipeline := a.FetchCheckWithOptions(ctx, options.Fetch, options.Check)
+	a.updateRefreshProgress(PipelineProgress{Phase: "saving", Progress: pipelineProgressFromReport(pipeline)})
+	status := RefreshStatus{Status: "completed", Running: false, Phase: "completed", StartedAt: startedAt}
 	status.Pipeline = pipeline
 	status.Fetch = pipeline.Fetch
 	status.Check = pipeline.Check
 	status.Policy = options.Policy
-	status.Status = "completed"
-	status.Running = false
+	status.Progress = pipelineProgressFromReport(pipeline)
 	status.FinishedAt = time.Now()
+	if ctx.Err() != nil {
+		status.Status = "failed"
+		status.Phase = "failed"
+		status.Cancelled = true
+		status.Error = ctx.Err().Error()
+	}
 
 	a.refresh.mu.Lock()
 	defer a.refresh.mu.Unlock()
@@ -147,6 +169,38 @@ func (a *App) runRefresh(ctx context.Context, options RefreshOptions) {
 	status.NextAt = a.refresh.status.NextAt
 	a.refresh.running = false
 	a.refresh.status = status
+	a.log.Info("refresh completed",
+		"status", status.Status,
+		"phase", status.Phase,
+		"reason", status.LastReason,
+		"duration_ms", status.FinishedAt.Sub(status.StartedAt).Milliseconds(),
+		"successful_sources", status.Fetch.SuccessfulSources,
+		"failed_sources", status.Fetch.FailedSources,
+		"skipped_sources", status.Fetch.SkippedSources,
+		"scheduled_checks", status.Check.Scheduled,
+		"skipped_recent", status.Check.SkippedRecent,
+		"skipped_limit", status.Check.SkippedLimit)
+}
+
+func (a *App) updateRefreshProgress(update PipelineProgress) {
+	a.refresh.mu.Lock()
+	defer a.refresh.mu.Unlock()
+	if !a.refresh.running {
+		return
+	}
+	status := a.refresh.status
+	status.Phase = update.Phase
+	status.Progress = update.Progress
+	a.refresh.status = status
+}
+
+func pipelineProgressFromReport(report PipelineReport) RefreshProgress {
+	return RefreshProgress{
+		TotalSources:     report.Fetch.TotalSources,
+		CompletedSources: report.Fetch.SuccessfulSources + report.Fetch.FailedSources + report.Fetch.SkippedSources,
+		ScheduledChecks:  report.Check.Scheduled,
+		CompletedChecks:  report.Check.Healthy + report.Check.Degraded + report.Check.Dead,
+	}
 }
 
 func (a *App) nextRefreshDecision(policy RefreshPolicy) RefreshDecision {

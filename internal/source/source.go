@@ -10,3 +10,7 @@ type Source interface {
 	Name() string
 	Fetch(ctx context.Context) ([]model.Proxy, error)
 }
+
+type URLProvider interface {
+	SourceURL() string
+}
