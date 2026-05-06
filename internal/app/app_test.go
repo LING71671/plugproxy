@@ -175,6 +175,186 @@ func TestCheckWithOptionsWritesCache(t *testing.T) {
 	}
 }
 
+func TestCheckWithOptionsSkipsRecentByTTL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	checkedAt := time.Now().Add(-time.Minute).UTC()
+	application := NewWithSources(slog.Default(), nil)
+	application.Pool().Add(model.Proxy{
+		ID:            "socks4://127.0.0.1:1080",
+		Address:       "127.0.0.1:1080",
+		Protocol:      model.ProtocolSOCKS4,
+		HealthStatus:  model.HealthDead,
+		HealthScore:   10,
+		CheckCount:    1,
+		LastCheckedAt: checkedAt,
+	})
+
+	stats := application.CheckWithOptions(context.Background(), CheckOptions{
+		Workers:    1,
+		Filter:     pool.Filter{Protocol: model.ProtocolSOCKS4},
+		CachePath:  path,
+		CacheWrite: true,
+		CheckTTL:   30 * time.Minute,
+	})
+	if stats.Total != 1 || stats.Scheduled != 0 || stats.SkippedRecent != 1 {
+		t.Fatalf("unexpected schedule stats %#v", stats)
+	}
+	if stats.Unsupported != 0 {
+		t.Fatalf("expected skipped proxy not to be checked, got %#v", stats)
+	}
+
+	loaded, err := cache.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].CheckCount != 1 || !loaded[0].LastCheckedAt.Equal(checkedAt) {
+		t.Fatalf("expected cached proxy unchanged, got %#v", loaded)
+	}
+}
+
+func TestCheckWithOptionsHonorsMaxChecks(t *testing.T) {
+	application := NewWithSources(slog.Default(), nil)
+	application.Pool().Add(model.Proxy{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4})
+	application.Pool().Add(model.Proxy{ID: "socks4://127.0.0.2:1080", Address: "127.0.0.2:1080", Protocol: model.ProtocolSOCKS4})
+
+	stats := application.CheckWithOptions(context.Background(), CheckOptions{
+		Workers:   1,
+		Filter:    pool.Filter{Protocol: model.ProtocolSOCKS4},
+		MaxChecks: 1,
+	})
+	if stats.Total != 2 || stats.Scheduled != 1 || stats.SkippedLimit != 1 {
+		t.Fatalf("unexpected schedule stats %#v", stats)
+	}
+	if stats.Unsupported != 1 {
+		t.Fatalf("expected one scheduled socks4 check, got %#v", stats)
+	}
+}
+
+func TestFetchCheckWithOptionsChecksFastSourceBeforeSlowSourceCompletes(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	application := NewWithSources(slog.Default(), []source.Source{
+		source.NewStatic("fast", []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}),
+		blockingSource{name: "slow", started: started, release: release},
+	})
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+
+	done := make(chan PipelineReport, 1)
+	go func() {
+		done <- application.FetchCheckWithOptions(context.Background(),
+			FetchOptions{Workers: 2, CachePath: cachePath, CacheWrite: false},
+			CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}},
+		)
+	}()
+
+	<-started
+	deadline := time.After(2 * time.Second)
+	for {
+		items := application.Pool().List(pool.Filter{Protocol: model.ProtocolSOCKS4})
+		for _, item := range items {
+			if item.ID == "socks4://127.0.0.1:1080" && item.CheckCount > 0 {
+				close(release)
+				report := <-done
+				if report.Check.Unsupported != 1 || report.Fetch.Duplicates != 1 {
+					t.Fatalf("expected duplicate slow proxy not to be rechecked, got fetch=%#v check=%#v", report.Fetch, report.Check)
+				}
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			close(release)
+			t.Fatal("fast source proxy was not checked before slow source completed")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestFetchCheckWithOptionsUsesCacheAndCheckTTL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	checkedAt := time.Now().Add(-time.Minute).UTC()
+	if err := cache.Save(path, []model.Proxy{{
+		ID:            "socks4://127.0.0.1:1080",
+		Address:       "127.0.0.1:1080",
+		Protocol:      model.ProtocolSOCKS4,
+		HealthStatus:  model.HealthDead,
+		HealthScore:   10,
+		CheckCount:    1,
+		LastCheckedAt: checkedAt,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	application := NewWithSources(slog.Default(), []source.Source{
+		source.NewStatic("duplicate", []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}),
+	})
+
+	report := application.FetchCheckWithOptions(context.Background(),
+		FetchOptions{Workers: 1, CachePath: path, CacheFallback: true, CacheWrite: true},
+		CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}, CheckTTL: 30 * time.Minute, CachePath: path, CacheWrite: true},
+	)
+	if report.Check.Total != 1 || report.Check.Scheduled != 0 || report.Check.SkippedRecent != 1 {
+		t.Fatalf("unexpected check stats %#v", report.Check)
+	}
+	if report.Fetch.Added != 1 || report.Fetch.Duplicates != 0 {
+		t.Fatalf("unexpected fetch report %#v", report.Fetch)
+	}
+}
+
+func TestFetchCheckWithOptionsSharesMaxChecksAcrossCacheAndSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	if err := cache.Save(path, []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}); err != nil {
+		t.Fatal(err)
+	}
+	application := NewWithSources(slog.Default(), []source.Source{
+		source.NewStatic("fresh", []model.Proxy{{ID: "socks4://127.0.0.2:1080", Address: "127.0.0.2:1080", Protocol: model.ProtocolSOCKS4}}),
+	})
+
+	report := application.FetchCheckWithOptions(context.Background(),
+		FetchOptions{Workers: 1, CachePath: path, CacheFallback: true, CacheWrite: false},
+		CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}, MaxChecks: 1},
+	)
+	if report.Check.Total != 2 || report.Check.Scheduled != 1 || report.Check.SkippedLimit != 1 {
+		t.Fatalf("unexpected check stats %#v", report.Check)
+	}
+}
+
+func TestFetchCheckWithOptionsDeduplicatesSourceProxies(t *testing.T) {
+	application := NewWithSources(slog.Default(), []source.Source{
+		source.NewStatic("one", []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}),
+		source.NewStatic("two", []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}),
+	})
+
+	report := application.FetchCheckWithOptions(context.Background(),
+		FetchOptions{Workers: 2, CachePath: filepath.Join(t.TempDir(), "cache.json"), CacheWrite: false},
+		CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}},
+	)
+	if report.Fetch.Duplicates != 1 || report.Fetch.Added != 1 {
+		t.Fatalf("unexpected fetch report %#v", report.Fetch)
+	}
+	if report.Check.Scheduled != 1 || report.Check.Unsupported != 1 {
+		t.Fatalf("unexpected check stats %#v", report.Check)
+	}
+}
+
+func TestFetchCheckWithOptionsUsesCacheWhenSourcesFail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	if err := cache.Save(path, []model.Proxy{{ID: "socks4://127.0.0.1:1080", Address: "127.0.0.1:1080", Protocol: model.ProtocolSOCKS4}}); err != nil {
+		t.Fatal(err)
+	}
+	application := NewWithSources(slog.Default(), []source.Source{failingSource{name: "fail"}})
+
+	report := application.FetchCheckWithOptions(context.Background(),
+		FetchOptions{Workers: 1, CachePath: path, CacheFallback: true, CacheWrite: true},
+		CheckOptions{Workers: 1, Filter: pool.Filter{Protocol: model.ProtocolSOCKS4}, CachePath: path, CacheWrite: true},
+	)
+	if !report.Fetch.ReusedFromCache || report.Fetch.Added != 1 || report.Fetch.FailedSources != 1 {
+		t.Fatalf("unexpected fetch report %#v", report.Fetch)
+	}
+	if report.Check.Scheduled != 1 || report.Check.Unsupported != 1 {
+		t.Fatalf("unexpected check stats %#v", report.Check)
+	}
+}
+
 func TestTriggerRefreshSkipsWhenAlreadyRunning(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -199,6 +379,9 @@ func TestTriggerRefreshSkipsWhenAlreadyRunning(t *testing.T) {
 	for {
 		status := application.RefreshStatus()
 		if status.Status == "completed" {
+			if status.Pipeline.Check.Scheduled == 0 || status.Check.Scheduled == 0 {
+				t.Fatalf("expected refresh pipeline report, got %#v", status)
+			}
 			return
 		}
 		select {

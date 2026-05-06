@@ -2,8 +2,12 @@ package discover
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/LING71671/plugproxy/internal/source"
+	"github.com/LING71671/plugproxy/pkg/model"
 )
 
 type Validator struct {
@@ -80,6 +84,10 @@ func (v Validator) validateOne(ctx context.Context, candidate CandidateSource) C
 		return candidate
 	}
 
+	if shouldValidateJSON(candidate, content) {
+		return v.validateJSON(candidate, content)
+	}
+
 	analyzed := v.analyzer.AnalyzeURLContent(candidate.URL, content, candidate.DiscoveredFrom)
 	if len(analyzed) == 0 {
 		candidate.Status = StatusInvalid
@@ -96,4 +104,56 @@ func (v Validator) validateOne(ctx context.Context, candidate CandidateSource) C
 		candidate.Confidence = analyzed[0].Confidence
 	}
 	return candidate
+}
+
+func (v Validator) validateJSON(candidate CandidateSource, content string) CandidateSource {
+	protocolHint := candidate.ProtocolHint
+	if protocolHint == "" {
+		protocolHint = InferProtocolHint(candidate.URL, content)
+	}
+	proxies, err := source.ParseJSONProxies([]byte(content), model.Protocol(protocolHint), candidate.Name, source.JSONConfig{})
+	if err != nil {
+		candidate.Status = StatusInvalid
+		candidate.Error = err.Error()
+		return candidate
+	}
+	if len(proxies) == 0 {
+		candidate.Status = StatusInvalid
+		candidate.Error = "json content does not contain parseable proxies"
+		return candidate
+	}
+
+	kind := candidate.SourceKind
+	if kind != KindAPI {
+		kind = InferKind(candidate.URL, content)
+	}
+	if kind != KindAPI {
+		kind = KindJSON
+	}
+	candidate.Status = StatusValid
+	candidate.Error = ""
+	candidate.Format = FormatJSON
+	candidate.SourceKind = kind
+	candidate.ProtocolHint = protocolHint
+	candidate.AdapterRequired = false
+	candidate.Evidence = sampleEvidence(content)
+	if candidate.Confidence < 0.9 {
+		candidate.Confidence = 0.9
+	}
+	candidate.Recipe = &SourceRecipe{
+		Kind:         kind,
+		Format:       FormatJSON,
+		Parser:       "json_auto",
+		URL:          candidate.URL,
+		ProtocolHint: protocolHint,
+		Notes:        fmt.Sprintf("parsed %d proxies", len(proxies)),
+	}
+	return candidate
+}
+
+func shouldValidateJSON(candidate CandidateSource, content string) bool {
+	return candidate.SourceKind == KindJSON ||
+		candidate.SourceKind == KindAPI ||
+		candidate.Format == FormatJSON ||
+		InferFormat(candidate.URL, content) == FormatJSON
 }

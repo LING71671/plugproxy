@@ -62,3 +62,53 @@ func FetchAllWithWorkers(ctx context.Context, sources []source.Source, workers i
 	wg.Wait()
 	return results
 }
+
+func FetchStreamWithWorkers(ctx context.Context, sources []source.Source, workers int) <-chan Result {
+	results := make(chan Result)
+	go func() {
+		defer close(results)
+		if workers <= 0 {
+			workers = 1
+		}
+		if workers > len(sources) {
+			workers = len(sources)
+		}
+		if len(sources) == 0 {
+			return
+		}
+
+		jobs := make(chan int)
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					src := sources[i]
+					start := time.Now()
+					proxies, err := src.Fetch(ctx)
+					result := Result{Source: src.Name(), Proxies: proxies, Error: err, Duration: time.Since(start)}
+					select {
+					case <-ctx.Done():
+						return
+					case results <- result:
+					}
+				}
+			}()
+		}
+
+		go func() {
+			defer close(jobs)
+			for i := range sources {
+				select {
+				case <-ctx.Done():
+					return
+				case jobs <- i:
+				}
+			}
+		}()
+
+		wg.Wait()
+	}()
+	return results
+}

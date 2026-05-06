@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/LING71671/plugproxy/internal/source"
 )
 
 func TestBuildSourcesSkipsDisabled(t *testing.T) {
@@ -21,6 +23,23 @@ func TestBuildSourcesSkipsDisabled(t *testing.T) {
 	}
 	if sources[0].Name() != "on" {
 		t.Fatalf("expected enabled source, got %s", sources[0].Name())
+	}
+}
+
+func TestBuildSourcesSupportsJSONAndAPI(t *testing.T) {
+	enabled := true
+	sources, err := BuildSources(Config{Sources: []SourceConfig{
+		{Name: "json", Type: "json_url", URL: "https://example.com/proxies.json", Enabled: &enabled},
+		{Name: "api", Type: "api_url", URL: "https://api.example.com/free-proxies", Headers: map[string]string{"Accept": "application/json"}, JSON: &source.JSONConfig{ItemsPath: "data"}, Enabled: &enabled},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 sources, got %d", len(sources))
+	}
+	if sources[0].Name() != "json" || sources[1].Name() != "api" {
+		t.Fatalf("unexpected sources %#v", sources)
 	}
 }
 

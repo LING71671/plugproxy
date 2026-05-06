@@ -61,3 +61,34 @@ func TestRunChecksAPI(t *testing.T) {
 		t.Fatalf("expected api ok, got %#v", report.API)
 	}
 }
+
+func TestRunSourceCheckReportsEachSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`["1.1.1.1:8080"]`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "sources.json")
+	cachePath := filepath.Join(dir, "cache.json")
+	cfg := config.Config{Sources: []config.SourceConfig{{
+		Name:         "json",
+		Type:         "json_url",
+		URL:          server.URL,
+		ProtocolHint: "http",
+	}}}
+	if err := config.Save(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	report := Run(context.Background(), Options{ConfigPath: configPath, CachePath: cachePath, SourceCheck: true})
+	if !report.OK {
+		t.Fatalf("expected report ok, got %#v", report)
+	}
+	if report.Sources.Checked != 1 || report.Sources.Proxies != 1 {
+		t.Fatalf("unexpected sources report %#v", report.Sources)
+	}
+	if len(report.Sources.Items) != 1 || report.Sources.Items[0].Type != "json_url" || report.Sources.Items[0].Count != 1 {
+		t.Fatalf("unexpected source item %#v", report.Sources.Items)
+	}
+}

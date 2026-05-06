@@ -19,13 +19,15 @@ type Config struct {
 }
 
 type SourceConfig struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	URL          string `json:"url"`
-	ProtocolHint string `json:"protocol_hint,omitempty"`
-	Enabled      *bool  `json:"enabled,omitempty"`
-	Timeout      string `json:"timeout,omitempty"`
-	BodyLimit    int64  `json:"body_limit,omitempty"`
+	Name         string             `json:"name"`
+	Type         string             `json:"type"`
+	URL          string             `json:"url"`
+	ProtocolHint string             `json:"protocol_hint,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	Timeout      string             `json:"timeout,omitempty"`
+	BodyLimit    int64              `json:"body_limit,omitempty"`
+	Headers      map[string]string  `json:"headers,omitempty"`
+	JSON         *source.JSONConfig `json:"json,omitempty"`
 }
 
 func LoadSources(path string) ([]source.Source, error) {
@@ -75,13 +77,9 @@ func BuildSources(cfg Config) ([]source.Source, error) {
 		}
 		switch item.Type {
 		case "", "raw_text_url":
-			timeout := source.DefaultRawTextTimeout
-			if item.Timeout != "" {
-				parsed, err := time.ParseDuration(item.Timeout)
-				if err != nil {
-					return nil, fmt.Errorf("source %q timeout: %w", item.Name, err)
-				}
-				timeout = parsed
+			timeout, err := sourceTimeout(item, source.DefaultRawTextTimeout)
+			if err != nil {
+				return nil, err
 			}
 			sources = append(sources, source.NewRawTextURL(source.RawTextURLOption{
 				Name:         item.Name,
@@ -90,11 +88,40 @@ func BuildSources(cfg Config) ([]source.Source, error) {
 				Timeout:      timeout,
 				BodyLimit:    item.BodyLimit,
 			}))
+		case "json_url", "api_url":
+			timeout, err := sourceTimeout(item, source.DefaultJSONTimeout)
+			if err != nil {
+				return nil, err
+			}
+			jsonConfig := source.JSONConfig{}
+			if item.JSON != nil {
+				jsonConfig = *item.JSON
+			}
+			sources = append(sources, source.NewJSONURL(source.JSONURLOption{
+				Name:         item.Name,
+				URL:          item.URL,
+				ProtocolHint: model.Protocol(item.ProtocolHint),
+				Headers:      item.Headers,
+				JSON:         jsonConfig,
+				Timeout:      timeout,
+				BodyLimit:    item.BodyLimit,
+			}))
 		default:
 			return nil, fmt.Errorf("unsupported source type %q for %q", item.Type, item.Name)
 		}
 	}
 	return sources, nil
+}
+
+func sourceTimeout(item SourceConfig, fallback time.Duration) (time.Duration, error) {
+	if item.Timeout == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(item.Timeout)
+	if err != nil {
+		return 0, fmt.Errorf("source %q timeout: %w", item.Name, err)
+	}
+	return parsed, nil
 }
 
 func DefaultConfig() Config {

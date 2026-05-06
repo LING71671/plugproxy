@@ -17,6 +17,29 @@
       "enabled": true,
       "timeout": "12s",
       "body_limit": 2097152
+    },
+    {
+      "name": "example-json",
+      "type": "json_url",
+      "url": "https://example.com/proxies.json",
+      "protocol_hint": "http",
+      "enabled": false,
+      "json": {
+        "items_path": "data",
+        "host_field": "ip",
+        "port_field": "port",
+        "protocol_field": "protocol"
+      }
+    },
+    {
+      "name": "example-api",
+      "type": "api_url",
+      "url": "https://api.example.com/free-proxies",
+      "protocol_hint": "http",
+      "enabled": false,
+      "headers": {
+        "Accept": "application/json"
+      }
     }
   ]
 }

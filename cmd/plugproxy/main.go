@@ -99,7 +99,9 @@ func main() {
 		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "workers": false, "protocol": false, "target": false, "timeout": false}))
+		maxChecks := fs.Int("max-checks", 0, "maximum proxies to check in this run; 0 means unlimited")
+		checkTTL := fs.Duration("check-ttl", 0, "skip proxies checked within this duration; 0 disables skipping")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "workers": false, "protocol": false, "target": false, "timeout": false, "max-checks": false, "check-ttl": false}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
@@ -117,6 +119,8 @@ func main() {
 			Filter:     pool.Filter{Protocol: model.Protocol(*protocol)},
 			CachePath:  *cachePath,
 			CacheWrite: true,
+			MaxChecks:  *maxChecks,
+			CheckTTL:   *checkTTL,
 		})
 		writeJSON(stats)
 	case "list":
@@ -200,46 +204,62 @@ func main() {
 		workers := fs.Int("workers", 32, "number of concurrent proxy checks")
 		target := fs.String("target", "https://httpbin.org/ip", "target URL used to check proxies")
 		timeout := fs.Duration("timeout", 8*time.Second, "per-proxy check timeout")
+		maxChecks := fs.Int("max-checks", 0, "maximum proxies to check per run; 0 means unlimited")
+		checkTTL := fs.Duration("check-ttl", 0, "skip proxies checked within this duration; 0 disables skipping")
 		skipCheck := fs.Bool("skip-check", true, "skip proxy checking on startup")
 		refresh := fs.Bool("refresh", true, "enable background fetch and check refresh")
 		refreshInterval := fs.Duration("refresh-interval", 5*time.Minute, "background refresh interval")
+		refreshMinInterval := fs.Duration("refresh-min-interval", 30*time.Second, "minimum dynamic refresh interval")
+		refreshMaxInterval := fs.Duration("refresh-max-interval", 30*time.Minute, "maximum dynamic refresh interval")
+		refreshJitter := fs.Duration("refresh-jitter", 10*time.Second, "maximum random refresh delay jitter")
+		minHealthy := fs.Int("min-healthy", 1, "refresh early when healthy proxy count is below this value")
+		minHealthyRatio := fs.Float64("min-healthy-ratio", 0, "refresh early when healthy proxy ratio is below this value")
+		uncheckedThreshold := fs.Int("unchecked-threshold", 100, "refresh early when unchecked proxy count reaches this value")
+		refreshFailureBackoff := fs.Float64("refresh-failure-backoff", 2, "multiply refresh delay after failed refresh")
 		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{
 			"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "addr": false, "workers": false,
-			"target": false, "timeout": false, "skip-check": true, "refresh": true, "refresh-interval": false,
+			"target": false, "timeout": false, "max-checks": false, "check-ttl": false, "skip-check": true, "refresh": true, "refresh-interval": false,
+			"refresh-min-interval": false, "refresh-max-interval": false, "refresh-jitter": false, "min-healthy": false,
+			"min-healthy-ratio": false, "unchecked-threshold": false, "refresh-failure-backoff": false,
 		}))
 
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
 		}
-		application.FetchWithOptions(ctx, app.FetchOptions{
+		fetchOptions := app.FetchOptions{
 			Workers:       *sourceWorkers,
 			CachePath:     *cachePath,
 			CacheFallback: *cacheFallback,
 			CacheWrite:    true,
-		})
-		if !*skipCheck {
-			application.CheckWithOptions(ctx, app.CheckOptions{
-				Workers:    *workers,
-				TargetURL:  *target,
-				Timeout:    *timeout,
-				CachePath:  *cachePath,
-				CacheWrite: true,
-			})
+		}
+		checkOptions := app.CheckOptions{
+			Workers:    *workers,
+			TargetURL:  *target,
+			Timeout:    *timeout,
+			CachePath:  *cachePath,
+			CacheWrite: true,
+			MaxChecks:  *maxChecks,
+			CheckTTL:   *checkTTL,
+		}
+		if *skipCheck {
+			application.FetchWithOptions(ctx, fetchOptions)
+		} else {
+			application.FetchCheckWithOptions(ctx, fetchOptions, checkOptions)
 		}
 		refreshOptions := app.RefreshOptions{
-			Fetch: app.FetchOptions{
-				Workers:       *sourceWorkers,
-				CachePath:     *cachePath,
-				CacheFallback: *cacheFallback,
-				CacheWrite:    true,
-			},
-			Check: app.CheckOptions{
-				Workers:    *workers,
-				TargetURL:  *target,
-				Timeout:    *timeout,
-				CachePath:  *cachePath,
-				CacheWrite: true,
+			Fetch: fetchOptions,
+			Check: checkOptions,
+			Policy: app.RefreshPolicy{
+				Enabled:            *refresh,
+				BaseInterval:       *refreshInterval,
+				MinInterval:        *refreshMinInterval,
+				MaxInterval:        *refreshMaxInterval,
+				Jitter:             *refreshJitter,
+				MinHealthy:         *minHealthy,
+				MinHealthyRatio:    *minHealthyRatio,
+				UncheckedThreshold: *uncheckedThreshold,
+				FailureBackoff:     *refreshFailureBackoff,
 			},
 		}
 		if *refresh {
@@ -268,11 +288,11 @@ Usage:
   plugproxy init [-config plugproxy.sources.json] [-force]
   plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
   plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
-  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
+  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-ttl 0s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
   plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
-  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-ttl 0s]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE

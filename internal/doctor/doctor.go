@@ -64,10 +64,19 @@ type APIReport struct {
 }
 
 type SourcesReport struct {
-	Checked int `json:"checked"`
-	OK      int `json:"ok"`
-	Failed  int `json:"failed"`
-	Proxies int `json:"proxies"`
+	Checked int                 `json:"checked"`
+	OK      int                 `json:"ok"`
+	Failed  int                 `json:"failed"`
+	Proxies int                 `json:"proxies"`
+	Items   []SourceCheckReport `json:"items,omitempty"`
+}
+
+type SourceCheckReport struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+	Error  string `json:"error,omitempty"`
 }
 
 func Run(ctx context.Context, options Options) Report {
@@ -168,20 +177,53 @@ func checkSources(ctx context.Context, report *Report, cfg config.Config, worker
 		return
 	}
 	results := fetcher.FetchAllWithWorkers(ctx, sources, workers)
+	sourceConfigs := enabledSourceConfigs(cfg)
 	report.Sources.Checked = len(results)
-	for _, result := range results {
+	report.Sources.Items = make([]SourceCheckReport, 0, len(results))
+	for index, result := range results {
+		item := SourceCheckReport{
+			Name:   result.Source,
+			Type:   sourceTypeAt(sourceConfigs, index),
+			Status: StatusOK,
+			Count:  len(result.Proxies),
+		}
 		if result.Error != nil {
 			report.Sources.Failed++
+			item.Status = StatusFail
+			item.Error = result.Error.Error()
+			report.Sources.Items = append(report.Sources.Items, item)
 			continue
 		}
 		report.Sources.OK++
 		report.Sources.Proxies += len(result.Proxies)
+		report.Sources.Items = append(report.Sources.Items, item)
 	}
 	if report.Sources.Failed > 0 {
 		report.add("sources", StatusWarn, fmt.Sprintf("%d/%d sources failed", report.Sources.Failed, report.Sources.Checked))
 		return
 	}
 	report.add("sources", StatusOK, fmt.Sprintf("%d proxies fetched", report.Sources.Proxies))
+}
+
+func enabledSourceConfigs(cfg config.Config) []config.SourceConfig {
+	items := make([]config.SourceConfig, 0, len(cfg.Sources))
+	for _, source := range cfg.Sources {
+		if source.Enabled != nil && !*source.Enabled {
+			continue
+		}
+		items = append(items, source)
+	}
+	return items
+}
+
+func sourceTypeAt(sources []config.SourceConfig, index int) string {
+	if index < 0 || index >= len(sources) {
+		return ""
+	}
+	if sources[index].Type == "" {
+		return "raw_text_url"
+	}
+	return sources[index].Type
 }
 
 func (r *Report) add(name string, status string, message string) {

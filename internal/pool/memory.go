@@ -18,6 +18,10 @@ func NewMemory() *MemoryPool {
 }
 
 func (p *MemoryPool) Add(proxy model.Proxy) {
+	_ = p.AddAndGet(proxy)
+}
+
+func (p *MemoryPool) AddAndGet(proxy model.Proxy) model.Proxy {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -26,6 +30,7 @@ func (p *MemoryPool) Add(proxy model.Proxy) {
 		proxy = mergeProxy(existing, proxy)
 	}
 	p.proxies[proxy.ID] = proxy
+	return proxy
 }
 
 func normalize(proxy model.Proxy) model.Proxy {

@@ -37,9 +37,9 @@ go run ./cmd/plugproxy doctor
 plugproxy init
 plugproxy doctor
 plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
-plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
+plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
 plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
-plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m
+plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m
 ```
 
 Go 项目接入见 [Go SDK 接入](docs/sdk.md)。
@@ -113,8 +113,8 @@ go run ./cmd/plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
 go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
-go run ./cmd/plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
-go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m
+go run ./cmd/plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s -max-checks 0 -check-ttl 0s
+go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -max-checks 0 -check-ttl 0s
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
 go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
@@ -156,6 +156,8 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 健康状态会写入 `.plugproxy.cache.json`，独立执行一次 `check` 后，下一次 `get/list/run` 会复用历史健康评分。
 
+`check` 和 `run` 支持轻量检测调度：`-check-ttl` 可跳过最近检测过的代理，`-max-checks` 可限制单轮检测数量。默认 `-check-ttl 0s -max-checks 0` 表示保持全量检测。
+
 ## 代理源配置
 
 默认会读取 `plugproxy.sources.json`。如果文件不存在，plugproxy 会启用内置的第一批高优先级 Raw/API TXT 源。
@@ -178,7 +180,13 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 }
 ```
 
-第一版配置源只支持 `type: "raw_text_url"`，可解析 `ip:port` 和 `protocol://ip:port`。
+当前运行时支持 `raw_text_url`、`json_url` 和 `api_url`：
+
+- `raw_text_url`：解析 `ip:port` 和 `protocol://ip:port`。
+- `json_url`：解析字符串数组、对象数组，以及 `data/items/results/proxies` 等根对象数组。
+- `api_url`：第一版按 JSON API 处理，可通过 `headers` 设置 `Accept`、`User-Agent` 等公开 API 请求头。
+
+JSON/API 字段映射可用 `json.items_path`、`json.proxy_field`、`json.host_field`、`json.port_field`、`json.protocol_field` 做轻量覆盖；`items_path` 只支持单层 key。更完整的源接入说明见 [代理源清单](docs/proxy-sources.md)。
 
 ## 采集缓存
 
@@ -190,7 +198,7 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 ## 自动刷新
 
-`run` 默认开启后台刷新，每 5 分钟执行一次 `fetch -> check -> save cache`。可用 `-refresh=false` 关闭，或用 `-refresh-interval` 调整周期。
+`run` 默认开启动态刷新控制器。`-refresh-interval` 是基础间隔，不是写死节拍；控制器会根据健康代理水位、unchecked 积压、上一轮失败情况和抖动计算下一次刷新。刷新会在源返回后尽快去重、调度检测并入池，不必等待所有源都抓取完成；最终仍只写一次 cache。可用 `-refresh=false` 关闭，或用 `-refresh-min-interval`、`-refresh-max-interval`、`-min-healthy` 等参数调整策略。
 
 刷新任务串行执行，上一轮未结束时会跳过新一轮。HTTP API 提供：
 
@@ -238,5 +246,6 @@ docs/                项目文档
 - [发布流程](docs/release.md)
 - [代理源清单](docs/proxy-sources.md)
 - [代理源发现爬虫设计](docs/source-discovery.md)
+- [并发能力设计备忘](docs/concurrency.md)
 - [Go SDK 接入](docs/sdk.md)
 - [开发路线图](docs/roadmap.md)

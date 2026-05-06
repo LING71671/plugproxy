@@ -1,6 +1,6 @@
 # 代理源清单
 
-> 更新时间：2026-05-05。免费代理源变化很快，所有源都必须经过 plugproxy 自己的检测、去重、评分和隔离流程。
+> 更新时间：2026-05-06。免费代理源变化很快，所有源都必须经过 plugproxy 自己的检测、去重、评分和隔离流程。
 
 ## 收集原则
 
@@ -306,9 +306,9 @@ plugproxy discover validate docs/proxy-sources.candidates.json
   - `https://docs.geonode.com/api-reference/introduction`
 - 备注：需要认证和服务配置，不适合作为默认免费源，但可作为未来付费/账号源适配样例。
 
-## Adapter 设计建议
+## 运行时支持状态
 
-第一阶段只实现两个通用 adapter：
+当前 `fetch/list/check/run/doctor` 主链路支持三个通用 adapter：
 
 1. `raw_text_url`
    - 输入：URL、默认协议、source name。
@@ -318,11 +318,56 @@ plugproxy discover validate docs/proxy-sources.candidates.json
    - 适配大多数 GitHub Raw、CDN Raw 和 TXT API。
 
 2. `json_url`
-   - 输入：URL、字段映射。
-   - 支持数组对象和数组字符串。
-   - 先适配 `monosans/proxy-list`，后续扩展到 ProxyScrape JSON、Proxifly JSON。
+   - 输入：URL、默认协议、可选字段映射。
+   - 支持 JSON 根结构：
+     - 字符串数组，例如 `["1.1.1.1:8080", "http://2.2.2.2:8080"]`。
+     - 对象数组，例如 `[{ "ip": "1.1.1.1", "port": 8080, "protocol": "http" }]`。
+     - 对象包数组，例如 `{ "proxies": [...] }`、`{ "data": [...] }`、`{ "items": [...] }`、`{ "results": [...] }`。
+   - 自动识别字段：
+     - 地址字段：`proxy`、`url`、`address`、`addr`。
+     - 主机字段：`ip`、`host`。
+     - 端口字段：`port`。
+     - 协议字段：`protocol`、`type`、`scheme`。
+   - 可用 `json.items_path`、`json.proxy_field`、`json.host_field`、`json.port_field`、`json.protocol_field` 覆盖默认映射。
+   - `items_path` 只支持单层 key，不实现 JSONPath/JQ。
 
-第二阶段再做页面型 adapter。页面型源需要独立限速、缓存和失败降级，不能影响主流程。
+3. `api_url`
+   - 第一版复用 `json_url` 解析器。
+   - 额外支持 `headers`，用于设置公开 API 所需的 `Accept`、`User-Agent` 等请求头。
+   - 不实现认证流程，不执行 JS，不绕过登录、验证码或付费墙。
+
+页面型 `html_table` 仍后置。页面型源需要独立限速、缓存和失败降级，不能影响主流程。
+
+配置示例：
+
+```json
+{
+  "name": "example-json",
+  "type": "json_url",
+  "url": "https://example.com/proxies.json",
+  "protocol_hint": "http",
+  "enabled": true,
+  "json": {
+    "items_path": "data",
+    "host_field": "ip",
+    "port_field": "port",
+    "protocol_field": "protocol"
+  }
+}
+```
+
+```json
+{
+  "name": "example-api",
+  "type": "api_url",
+  "url": "https://api.example.com/free-proxies",
+  "protocol_hint": "http",
+  "enabled": true,
+  "headers": {
+    "Accept": "application/json"
+  }
+}
+```
 
 ## 默认内置源建议
 

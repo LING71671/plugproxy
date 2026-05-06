@@ -66,7 +66,7 @@
 - 判断内容是否符合以下模式：
   - `ip:port`
   - `protocol://ip:port`
-  - JSON 数组。
+  - JSON 字符串数组、对象数组或 `data/items/results/proxies` 包裹数组。
   - 每行一个 URL 的源清单。
 
 ## 评分
@@ -111,7 +111,7 @@ plugproxy discover search -query "proxy sources" -ai -ai-provider responses-comp
 discover -> candidates -> validate source -> human review -> source config -> fetch -> check -> pool
 ```
 
-当前主采集链路已经支持 `raw_text_url` 源配置。候选源经过人工确认后，可以写入 `plugproxy.sources.json`：
+当前主采集链路已经支持 `raw_text_url`、`json_url` 和 `api_url` 源配置。候选源经过人工确认后，可以写入 `plugproxy.sources.json`：
 
 ```json
 {
@@ -120,6 +120,39 @@ discover -> candidates -> validate source -> human review -> source config -> fe
   "url": "https://example.com/http.txt",
   "protocol_hint": "http",
   "enabled": true
+}
+```
+
+JSON 候选源如果抽样验证能解析出代理，`discover validate` 会标记为 `adapter_required=false`，并输出 `recipe.parser=json_auto`。进入配置时可以使用自动解析，也可以补充轻量字段映射：
+
+```json
+{
+  "name": "example-json",
+  "type": "json_url",
+  "url": "https://example.com/proxies.json",
+  "protocol_hint": "http",
+  "enabled": true,
+  "json": {
+    "items_path": "data",
+    "host_field": "ip",
+    "port_field": "port",
+    "protocol_field": "protocol"
+  }
+}
+```
+
+公开 JSON API 可以用 `api_url`，第一版只增加请求头能力，不处理认证、分页、多请求聚合：
+
+```json
+{
+  "name": "example-api",
+  "type": "api_url",
+  "url": "https://api.example.com/free-proxies",
+  "protocol_hint": "http",
+  "enabled": true,
+  "headers": {
+    "Accept": "application/json"
+  }
 }
 ```
 
