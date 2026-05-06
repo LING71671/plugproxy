@@ -299,15 +299,18 @@ func (a *App) Serve(addr string) error {
 }
 
 func (a *App) ServeWithRefresh(addr string, refreshOptions RefreshOptions) error {
-	srv := server.New(a.pool, a.log).WithSourceReport(func() any {
+	a.log.Info("api server listening", "addr", addr)
+	return http.ListenAndServe(addr, a.Handler(refreshOptions))
+}
+
+func (a *App) Handler(refreshOptions RefreshOptions) http.Handler {
+	return server.New(a.pool, a.log).WithSourceReport(func() any {
 		return a.LastFetchReport()
 	}).WithRefresh(func(ctx context.Context) any {
 		return a.TriggerRefresh(ctx, refreshOptions)
 	}, func() any {
 		return a.RefreshStatus()
-	})
-	a.log.Info("api server listening", "addr", addr)
-	return http.ListenAndServe(addr, srv.Handler())
+	}).Handler()
 }
 
 func (a *App) LastFetchReport() FetchReport {

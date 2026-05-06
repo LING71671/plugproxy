@@ -36,6 +36,7 @@
 - 提供 CLI JSON 输出，方便脚本接入。
 - 提供本地代理获取命令，例如 `plugproxy get`。
 - 增加后台自动刷新和异步 `POST /refresh` 触发接口。
+- 增加 HTTP Client SDK、嵌入式 SDK、`/stats` 和 `plugproxy stats`。
 
 ## 第五阶段：管理与可视化
 

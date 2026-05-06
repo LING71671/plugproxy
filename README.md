@@ -79,6 +79,7 @@ go run ./cmd/plugproxy version
 go run ./cmd/plugproxy fetch -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
 go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
+go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
 go run ./cmd/plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -timeout 8s
 go run ./cmd/plugproxy run -source-workers 32 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m
 go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
@@ -94,7 +95,9 @@ GET /health
 GET /sources
 GET /refresh
 POST /refresh
+GET /stats
 GET /proxies
+GET /proxies?protocol=http&status=healthy&limit=100&offset=0
 GET /proxy
 GET /proxy?protocol=http
 GET /proxy?strategy=fastest
@@ -163,6 +166,21 @@ POST /refresh  异步触发一次刷新
 GET /refresh   查看最近一次刷新状态
 ```
 
+## Go SDK
+
+推荐外部项目通过 `pkg/client` 连接常驻 plugproxy 服务：
+
+```go
+c := client.New("http://127.0.0.1:8899")
+p, err := c.GetProxy(ctx, client.GetProxyOptions{
+	Strategy: "fastest",
+	Protocol: model.ProtocolHTTP,
+	Healthy:  true,
+})
+```
+
+需要业务进程自带代理池时，可以使用 `pkg/plugproxy` 启动嵌入式服务。详细示例见 [Go SDK 接入](docs/sdk.md)。
+
 ## 项目结构
 
 ```text
@@ -186,4 +204,5 @@ docs/                项目文档
 - [GitHub Actions CI/CD](docs/ci-cd.md)
 - [代理源清单](docs/proxy-sources.md)
 - [代理源发现爬虫设计](docs/source-discovery.md)
+- [Go SDK 接入](docs/sdk.md)
 - [开发路线图](docs/roadmap.md)

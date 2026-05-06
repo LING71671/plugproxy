@@ -113,6 +113,12 @@ func (p *MemoryPool) List(filter Filter) []model.Proxy {
 		if filter.Protocol != "" && proxy.Protocol != filter.Protocol {
 			continue
 		}
+		if filter.Source != "" && proxy.Source != filter.Source {
+			continue
+		}
+		if filter.Status != "" && proxy.Status() != filter.Status {
+			continue
+		}
 		if filter.Healthy && !proxy.Healthy() {
 			continue
 		}

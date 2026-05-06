@@ -82,3 +82,17 @@ func TestMemoryPoolPreservesHealthWhenFetchedAgain(t *testing.T) {
 		t.Fatalf("expected last checked to be preserved")
 	}
 }
+
+func TestMemoryPoolListFiltersStatusAndSource(t *testing.T) {
+	p := NewMemory()
+	p.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, Source: "one", HealthStatus: model.HealthHealthy})
+	p.Add(model.Proxy{ID: "http://b:1", Address: "b:1", Protocol: model.ProtocolHTTP, Source: "two", HealthStatus: model.HealthDead})
+
+	items := p.List(Filter{Status: model.HealthHealthy, Source: "one"})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 proxy, got %d", len(items))
+	}
+	if items[0].Address != "a:1" {
+		t.Fatalf("expected a:1, got %s", items[0].Address)
+	}
+}

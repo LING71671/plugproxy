@@ -125,6 +125,33 @@ func main() {
 			os.Exit(1)
 		}
 		writeJSON(proxy)
+	case "stats":
+		fs := flag.NewFlagSet("stats", flag.ExitOnError)
+		configPath := fs.String("config", config.DefaultPath, "source config path")
+		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
+		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
+		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
+		fetch := fs.Bool("fetch", false, "fetch and merge sources before computing stats")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "fetch": true}))
+		if *fetch {
+			application, err := newApplication(log, *configPath)
+			if err != nil {
+				exitErr(err)
+			}
+			application.FetchWithOptions(ctx, app.FetchOptions{
+				Workers:       *sourceWorkers,
+				CachePath:     *cachePath,
+				CacheFallback: *cacheFallback,
+				CacheWrite:    true,
+			})
+			writeJSON(model.NewProxyStats(application.Pool().List(pool.Filter{})))
+			break
+		}
+		proxies, err := cache.Load(*cachePath)
+		if err != nil {
+			exitErr(err)
+		}
+		writeJSON(model.NewProxyStats(proxies))
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
@@ -204,6 +231,7 @@ Usage:
   plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-workers 32] [-protocol http] [-target URL] [-timeout 8s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
+  plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
   plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m]
   plugproxy discover repo owner/name
   plugproxy discover url URL

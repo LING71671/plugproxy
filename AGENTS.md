@@ -41,6 +41,7 @@ go run ./cmd/plugproxy version
 go run ./cmd/plugproxy fetch -cache .plugproxy.cache.json
 go run ./cmd/plugproxy list
 go run ./cmd/plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http -healthy=true
+go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
 go run ./cmd/plugproxy check -source-workers 32 -workers 128 -protocol http -cache .plugproxy.cache.json
 go run ./cmd/plugproxy run -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m
 go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10
@@ -58,5 +59,7 @@ internal/pool/       代理池接口与内存实现
 internal/server/     轻量 HTTP API
 internal/source/     代理源接口与实现
 pkg/model/           公开代理数据模型
+pkg/client/          HTTP Client SDK
+pkg/plugproxy/       嵌入式 SDK
 docs/                项目文档
 ```

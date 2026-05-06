@@ -12,6 +12,8 @@ const (
 type Filter struct {
 	Protocol model.Protocol
 	Healthy  bool
+	Status   model.HealthStatus
+	Source   string
 }
 
 type Pool interface {
