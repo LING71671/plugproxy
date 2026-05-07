@@ -183,7 +183,7 @@ func parseJSONItem(item any, protocolHint model.Protocol, config JSONConfig) (mo
 }
 
 func parseJSONProxyField(item map[string]any, protocolHint model.Protocol, config JSONConfig) (model.Proxy, bool) {
-	for _, field := range preferredFields(config.ProxyField, []string{"proxy", "url", "address", "addr"}) {
+	for _, field := range preferredFields(config.ProxyField, []string{"proxy", "url", "address", "addr", "ip", "host"}) {
 		value, ok := stringField(item, field)
 		if !ok {
 			continue

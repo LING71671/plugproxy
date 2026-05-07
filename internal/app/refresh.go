@@ -223,10 +223,18 @@ func (a *App) updateRefreshProgress(update PipelineProgress) {
 
 func pipelineProgressFromReport(report PipelineReport) RefreshProgress {
 	return RefreshProgress{
-		TotalSources:     report.Fetch.TotalSources,
-		CompletedSources: report.Fetch.SuccessfulSources + report.Fetch.FailedSources + report.Fetch.SkippedSources,
-		ScheduledChecks:  report.Check.Scheduled,
-		CompletedChecks:  report.Check.Healthy + report.Check.Degraded + report.Check.Dead,
+		TotalSources:      report.Fetch.TotalSources,
+		CompletedSources:  report.Fetch.SuccessfulSources + report.Fetch.FailedSources + report.Fetch.SkippedSources,
+		SuccessfulSources: report.Fetch.SuccessfulSources,
+		FailedSources:     report.Fetch.FailedSources,
+		SkippedSources:    report.Fetch.SkippedSources,
+		Fetched:           report.Fetch.Fetched,
+		Added:             report.Fetch.Added,
+		Duplicates:        report.Fetch.Duplicates,
+		ScheduledChecks:   report.Check.Scheduled,
+		CompletedChecks:   report.Check.Healthy + report.Check.Degraded + report.Check.Dead,
+		FailedChecks:      report.Check.Failed,
+		UnsupportedChecks: report.Check.Unsupported,
 	}
 }
 

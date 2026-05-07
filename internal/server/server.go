@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/LING71671/plugproxy/internal/pool"
+	"github.com/LING71671/plugproxy/internal/web"
 	"github.com/LING71671/plugproxy/pkg/model"
 )
 
@@ -15,6 +16,7 @@ type Server struct {
 	pool          pool.Pool
 	log           *slog.Logger
 	sourceReport  func() any
+	metrics       func() any
 	refresh       func(context.Context) any
 	refreshState  func() any
 	refreshCancel func() any
@@ -33,6 +35,11 @@ func (s Server) WithSourceReport(report func() any) Server {
 	return s
 }
 
+func (s Server) WithMetrics(metrics func() any) Server {
+	s.metrics = metrics
+	return s
+}
+
 func (s Server) WithRefresh(refresh func(context.Context) any, state func() any, cancel ...func() any) Server {
 	s.refresh = refresh
 	s.refreshState = state
@@ -44,7 +51,11 @@ func (s Server) WithRefresh(refresh func(context.Context) any, state func() any,
 
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /health", s.health)
+	mux.HandleFunc("GET /metrics.json", s.getMetrics)
+	mux.Handle("GET /ui", http.RedirectHandler("/ui/", http.StatusMovedPermanently))
+	mux.Handle("GET /ui/", http.StripPrefix("/ui/", web.Handler()))
 	mux.HandleFunc("GET /sources", s.sources)
 	mux.HandleFunc("GET /refresh", s.getRefresh)
 	mux.HandleFunc("POST /refresh", s.postRefresh)
@@ -53,6 +64,14 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("GET /proxies", s.listProxies)
 	mux.HandleFunc("GET /proxy", s.getProxy)
 	return mux
+}
+
+func (s Server) index(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	http.Redirect(w, r, "/ui", http.StatusFound)
 }
 
 func (s Server) cancelRefresh(w http.ResponseWriter, _ *http.Request) {
@@ -87,6 +106,14 @@ func (s Server) sources(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.sourceReport())
+}
+
+func (s Server) getMetrics(w http.ResponseWriter, _ *http.Request) {
+	if s.metrics == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "metrics_unconfigured"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.metrics())
 }
 
 func (s Server) getRefresh(w http.ResponseWriter, _ *http.Request) {

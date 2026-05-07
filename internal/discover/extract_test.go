@@ -25,10 +25,60 @@ func TestLooksLikeProxyList(t *testing.T) {
 	}
 }
 
+func TestAnalyzeHTMLTextProxyList(t *testing.T) {
+	content := `<html><body>1.1.1.1:8080<br>2.2.2.2:3128<br></body></html>`
+
+	candidates := NewAnalyzer().AnalyzeURLContent("https://www.89ip.cn/tqdl.html", content, "test")
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	}
+	if candidates[0].SourceKind != KindHTMLText {
+		t.Fatalf("expected html text kind, got %s", candidates[0].SourceKind)
+	}
+	if candidates[0].AdapterRequired {
+		t.Fatal("expected html text source to be supported")
+	}
+	if candidates[0].Recipe == nil || candidates[0].Recipe.Parser != "html_text_auto" {
+		t.Fatalf("unexpected recipe %#v", candidates[0].Recipe)
+	}
+}
+
+func TestAnalyzeHTMLTextProxyTableCells(t *testing.T) {
+	content := `<html><body><table><tr><td>1.1.1.1</td><td>8080</td><td>HTTP</td></tr></table></body></html>`
+
+	candidates := NewAnalyzer().AnalyzeURLContent("https://www.kuaidaili.com/free/inha/1/", content, "test")
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	}
+	if candidates[0].SourceKind != KindHTMLText {
+		t.Fatalf("expected html text kind, got %s", candidates[0].SourceKind)
+	}
+	if candidates[0].AdapterRequired {
+		t.Fatal("expected split table source to be supported")
+	}
+	if candidates[0].ProtocolHint != "http" {
+		t.Fatalf("expected http protocol hint, got %q", candidates[0].ProtocolHint)
+	}
+}
+
 func TestLooksLikeSourceList(t *testing.T) {
 	content := "https://raw.githubusercontent.com/a/b/main/http.txt\nhttps://api.example.com/proxies.txt\n"
 	if !LooksLikeSourceList(content) {
 		t.Fatal("expected source list")
+	}
+}
+
+func TestInferProtocolHintDoesNotUseURLScheme(t *testing.T) {
+	got := InferProtocolHint("https://www.89ip.cn/tqdl.html?api=1", "1.1.1.1:8080<br>")
+	if got != "http" {
+		t.Fatalf("expected http hint, got %q", got)
+	}
+}
+
+func TestInferProtocolHintUsesExplicitProxyScheme(t *testing.T) {
+	got := InferProtocolHint("https://example.com/proxies", "socks5://1.1.1.1:1080<br>")
+	if got != "socks5" {
+		t.Fatalf("expected socks5 hint, got %q", got)
 	}
 }
 

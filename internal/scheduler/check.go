@@ -25,6 +25,8 @@ type CheckOptions struct {
 	DeadBackoffMax   time.Duration
 	SkipUnsupported  bool
 	ProtocolFair     bool
+	SourceFair       bool
+	TailBiased       bool
 }
 
 type CheckStats struct {
@@ -35,6 +37,7 @@ type CheckStats struct {
 	SkippedUnsupported int
 	SkippedBackoff     int
 	ByProtocol         map[model.Protocol]CheckProtocolStats
+	BySource           map[string]CheckSourceStats
 }
 
 type CheckProtocolStats struct {
@@ -44,6 +47,23 @@ type CheckProtocolStats struct {
 	SkippedLimit       int `json:"skipped_limit"`
 	SkippedUnsupported int `json:"skipped_unsupported"`
 	SkippedBackoff     int `json:"skipped_backoff"`
+}
+
+type CheckSourceStats struct {
+	Total              int `json:"total"`
+	Selected           int `json:"selected"`
+	SkippedRecent      int `json:"skipped_recent"`
+	SkippedLimit       int `json:"skipped_limit"`
+	SkippedUnsupported int `json:"skipped_unsupported"`
+	SkippedBackoff     int `json:"skipped_backoff"`
+	SelectedHead       int `json:"selected_head"`
+	SelectedMiddle     int `json:"selected_middle"`
+	SelectedTail       int `json:"selected_tail"`
+	Healthy            int `json:"healthy,omitempty"`
+	Degraded           int `json:"degraded,omitempty"`
+	Dead               int `json:"dead,omitempty"`
+	Unsupported        int `json:"unsupported,omitempty"`
+	Failed             int `json:"failed,omitempty"`
 }
 
 type CheckSchedule struct {
@@ -58,13 +78,19 @@ func ScheduleChecks(proxies []model.Proxy, options CheckOptions) CheckSchedule {
 	}
 	options = normalizeOptions(options)
 
-	stats := CheckStats{Total: len(proxies), ByProtocol: make(map[model.Protocol]CheckProtocolStats)}
+	stats := CheckStats{
+		Total:      len(proxies),
+		ByProtocol: make(map[model.Protocol]CheckProtocolStats),
+		BySource:   make(map[string]CheckSourceStats),
+	}
 	candidates := make([]model.Proxy, 0, len(proxies))
 	for _, proxy := range proxies {
 		addProtocolTotal(&stats, proxy.Protocol)
+		addSourceTotal(&stats, proxy.Source)
 		if options.SkipUnsupported && proxy.Protocol == model.ProtocolSOCKS4 {
 			stats.SkippedUnsupported++
 			addProtocolSkippedUnsupported(&stats, proxy.Protocol)
+			addSourceSkippedUnsupported(&stats, proxy.Source)
 			continue
 		}
 		skip := skipReason(proxy, now, options)
@@ -72,10 +98,12 @@ func ScheduleChecks(proxies []model.Proxy, options CheckOptions) CheckSchedule {
 		case "recent":
 			stats.SkippedRecent++
 			addProtocolSkippedRecent(&stats, proxy.Protocol)
+			addSourceSkippedRecent(&stats, proxy.Source)
 			continue
 		case "backoff":
 			stats.SkippedBackoff++
 			addProtocolSkippedBackoff(&stats, proxy.Protocol)
+			addSourceSkippedBackoff(&stats, proxy.Source)
 			continue
 		}
 		candidates = append(candidates, proxy)
@@ -85,13 +113,15 @@ func ScheduleChecks(proxies []model.Proxy, options CheckOptions) CheckSchedule {
 
 	if options.MaxChecks > 0 && options.MaxChecks < len(candidates) {
 		stats.SkippedLimit = len(candidates) - options.MaxChecks
-		candidates = selectLimited(candidates, options.MaxChecks, options.ProtocolFair)
+		candidates = selectLimited(candidates, options)
 	}
 	stats.Selected = len(candidates)
 	for _, proxy := range candidates {
 		addProtocolSelected(&stats, proxy.Protocol)
+		addSourceSelected(&stats, proxy)
 	}
 	addProtocolSkippedLimit(&stats)
+	addSourceSkippedLimit(&stats)
 	return CheckSchedule{Selected: candidates, Stats: stats}
 }
 
@@ -186,8 +216,12 @@ func sortCandidates(candidates []model.Proxy) {
 	})
 }
 
-func selectLimited(candidates []model.Proxy, maxChecks int, protocolFair bool) []model.Proxy {
-	if !protocolFair {
+func selectLimited(candidates []model.Proxy, options CheckOptions) []model.Proxy {
+	maxChecks := options.MaxChecks
+	if options.SourceFair {
+		return selectSourceFair(candidates, maxChecks, options.TailBiased)
+	}
+	if !options.ProtocolFair {
 		return candidates[:maxChecks]
 	}
 
@@ -216,6 +250,80 @@ func selectLimited(candidates []model.Proxy, maxChecks int, protocolFair bool) [
 		}
 	}
 	return selected
+}
+
+func selectSourceFair(candidates []model.Proxy, maxChecks int, tailBiased bool) []model.Proxy {
+	buckets := make(map[string][]model.Proxy)
+	order := make([]string, 0)
+	for _, proxy := range candidates {
+		key := sourceKey(proxy.Source)
+		if _, ok := buckets[key]; !ok {
+			order = append(order, key)
+		}
+		buckets[key] = append(buckets[key], proxy)
+	}
+	for key, items := range buckets {
+		buckets[key] = orderSourceBucket(items, tailBiased)
+	}
+
+	selected := make([]model.Proxy, 0, maxChecks)
+	for len(selected) < maxChecks {
+		progress := false
+		for _, source := range order {
+			items := buckets[source]
+			if len(items) == 0 {
+				continue
+			}
+			selected = append(selected, items[0])
+			buckets[source] = items[1:]
+			progress = true
+			if len(selected) == maxChecks {
+				break
+			}
+		}
+		if !progress {
+			break
+		}
+	}
+	return selected
+}
+
+func orderSourceBucket(items []model.Proxy, tailBiased bool) []model.Proxy {
+	if !tailBiased {
+		return items
+	}
+	ordered := make([]model.Proxy, 0, len(items))
+	for rank := 0; rank <= 4; rank++ {
+		head := make([]model.Proxy, 0)
+		middle := make([]model.Proxy, 0)
+		tail := make([]model.Proxy, 0)
+		for _, proxy := range items {
+			if checkRank(proxy) != rank {
+				continue
+			}
+			switch sourceSegment(proxy) {
+			case "tail":
+				tail = append(tail, proxy)
+			case "middle":
+				middle = append(middle, proxy)
+			default:
+				head = append(head, proxy)
+			}
+		}
+		sortSourceIndexDesc(tail)
+		sortSourceIndexDesc(middle)
+		sortSourceIndexDesc(head)
+		ordered = append(ordered, tail...)
+		ordered = append(ordered, middle...)
+		ordered = append(ordered, head...)
+	}
+	return ordered
+}
+
+func sortSourceIndexDesc(items []model.Proxy) {
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].SourceIndex > items[j].SourceIndex
+	})
 }
 
 func checkRank(proxy model.Proxy) int {
@@ -270,5 +378,80 @@ func addProtocolSkippedLimit(stats *CheckStats) {
 			value.SkippedLimit = 0
 		}
 		stats.ByProtocol[protocol] = value
+	}
+}
+
+func addSourceTotal(stats *CheckStats, source string) {
+	key := sourceKey(source)
+	value := stats.BySource[key]
+	value.Total++
+	stats.BySource[key] = value
+}
+
+func addSourceSelected(stats *CheckStats, proxy model.Proxy) {
+	key := sourceKey(proxy.Source)
+	value := stats.BySource[key]
+	value.Selected++
+	switch sourceSegment(proxy) {
+	case "tail":
+		value.SelectedTail++
+	case "middle":
+		value.SelectedMiddle++
+	default:
+		value.SelectedHead++
+	}
+	stats.BySource[key] = value
+}
+
+func addSourceSkippedRecent(stats *CheckStats, source string) {
+	key := sourceKey(source)
+	value := stats.BySource[key]
+	value.SkippedRecent++
+	stats.BySource[key] = value
+}
+
+func addSourceSkippedUnsupported(stats *CheckStats, source string) {
+	key := sourceKey(source)
+	value := stats.BySource[key]
+	value.SkippedUnsupported++
+	stats.BySource[key] = value
+}
+
+func addSourceSkippedBackoff(stats *CheckStats, source string) {
+	key := sourceKey(source)
+	value := stats.BySource[key]
+	value.SkippedBackoff++
+	stats.BySource[key] = value
+}
+
+func addSourceSkippedLimit(stats *CheckStats) {
+	for source, value := range stats.BySource {
+		value.SkippedLimit = value.Total - value.Selected - value.SkippedRecent - value.SkippedUnsupported - value.SkippedBackoff
+		if value.SkippedLimit < 0 {
+			value.SkippedLimit = 0
+		}
+		stats.BySource[source] = value
+	}
+}
+
+func sourceKey(source string) string {
+	if source == "" {
+		return "unknown"
+	}
+	return source
+}
+
+func sourceSegment(proxy model.Proxy) string {
+	if proxy.SourceTotal <= 0 {
+		return "head"
+	}
+	position := float64(proxy.SourceIndex+1) / float64(proxy.SourceTotal)
+	switch {
+	case position > 0.5:
+		return "tail"
+	case position > 0.2:
+		return "middle"
+	default:
+		return "head"
 	}
 }

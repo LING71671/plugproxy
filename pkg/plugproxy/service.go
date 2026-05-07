@@ -162,6 +162,8 @@ func (s *Service) refreshOptions() app.RefreshOptions {
 			Profile:         scheduler.ProfileSmart,
 			SkipUnsupported: true,
 			ProtocolFair:    true,
+			SourceFair:      true,
+			TailBiased:      true,
 			Transport: checker.TransportOptions{
 				ConnectTimeout:        s.config.ConnectTimeout,
 				TLSHandshakeTimeout:   s.config.TLSHandshakeTimeout,

@@ -25,9 +25,13 @@ func (a Analyzer) AnalyzeURLContent(rawURL, content, discoveredFrom string) []Ca
 		return Deduplicate(candidates)
 	}
 
+	if LooksLikeEmbeddedProxyList(content) || LooksLikeSplitProxyTable(content) {
+		return []CandidateSource{NewCandidate(rawURL, content, KindHTMLText, discoveredFrom, sampleEvidence(content))}
+	}
+
 	if LooksLikeProxyList(content) || InferFormat(rawURL, content) != FormatUnknown {
 		candidate := NewCandidate(rawURL, content, InferKind(rawURL, content), discoveredFrom, sampleEvidence(content))
-		if candidate.Format == FormatHTML {
+		if candidate.Format == FormatHTML && candidate.SourceKind != KindHTMLText {
 			candidate.AdapterRequired = true
 		}
 		return []CandidateSource{candidate}
@@ -60,6 +64,8 @@ func NewCandidate(rawURL, content string, kind SourceKind, discoveredFrom, evide
 		switch kind {
 		case KindJSON:
 			format = FormatJSON
+		case KindHTMLText:
+			format = FormatHTML
 		case KindHTMLTable, KindCrawlerCodeReference:
 			format = FormatHTML
 		default:
@@ -72,7 +78,7 @@ func NewCandidate(rawURL, content string, kind SourceKind, discoveredFrom, evide
 	switch kind {
 	case KindSourceList:
 		confidence = 0.70
-	case KindRawText, KindJSON, KindAPI:
+	case KindRawText, KindJSON, KindHTMLText, KindAPI:
 		confidence = 0.75
 	case KindHTMLTable:
 		confidence = 0.60
@@ -138,6 +144,8 @@ func parserFor(kind SourceKind, format SourceFormat) string {
 		return "source_list_urls"
 	case format == FormatJSON:
 		return "json_auto"
+	case kind == KindHTMLText:
+		return "html_text_auto"
 	case format == FormatHTML:
 		return "html_table_auto"
 	default:

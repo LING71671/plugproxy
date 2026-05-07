@@ -63,6 +63,9 @@ func TestFetchAllWithWorkersKeepsOrderAndErrors(t *testing.T) {
 	if len(results[0].Proxies) != 1 || !errors.Is(results[1].Error, wantErr) {
 		t.Fatalf("unexpected proxy/error results %#v", results)
 	}
+	if results[0].Proxies[0].SourceIndex != 0 || results[0].Proxies[0].SourceTotal != 1 {
+		t.Fatalf("expected source position annotation, got %#v", results[0].Proxies[0])
+	}
 }
 
 func TestFetchStreamWithWorkersEmitsCompletedSourceFirst(t *testing.T) {

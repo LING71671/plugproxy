@@ -139,6 +139,32 @@
   - `https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_pretty.json`
 - 备注：包含地理信息，适合做 JSON adapter 和元数据映射。
 
+### IPLocate free-proxy-list
+
+- 类型：GitHub/CDN Raw
+- 协议：HTTP、HTTPS、SOCKS4、SOCKS5
+- 格式：TXT
+- 优先级：高
+- 入口：
+  - `https://cdn.jsdelivr.net/gh/iplocate/free-proxy-list@main/protocols/http.txt`
+  - `https://cdn.jsdelivr.net/gh/iplocate/free-proxy-list@main/protocols/https.txt`
+  - `https://cdn.jsdelivr.net/gh/iplocate/free-proxy-list@main/protocols/socks4.txt`
+  - `https://cdn.jsdelivr.net/gh/iplocate/free-proxy-list@main/protocols/socks5.txt`
+- 备注：README 标注每 30 分钟验证更新；本地 HTTP 抽样检测中健康贡献较稳定，适合作为候选源。
+
+### Skillter/ProxyGather
+
+- 类型：GitHub/CDN Raw
+- 协议：HTTP、SOCKS4、SOCKS5
+- 格式：TXT
+- 优先级：中
+- 入口：
+  - `https://cdn.jsdelivr.net/gh/Skillter/ProxyGather@master/proxies/working-proxies-all.txt`
+  - `https://cdn.jsdelivr.net/gh/Skillter/ProxyGather@master/proxies/working-proxies-http.txt`
+  - `https://cdn.jsdelivr.net/gh/Skillter/ProxyGather@master/proxies/working-proxies-socks4.txt`
+  - `https://cdn.jsdelivr.net/gh/Skillter/ProxyGather@master/proxies/working-proxies-socks5.txt`
+- 备注：项目说明通过 GitHub Actions 自动抓取和检测；本地抽样中连接成功数较高，但当前 healthy 会波动，建议默认禁用、人工开启。
+
 ### joy-deploy/free-proxy-list
 
 - 类型：GitHub Raw
@@ -308,7 +334,7 @@ plugproxy discover validate docs/proxy-sources.candidates.json
 
 ## 运行时支持状态
 
-当前 `fetch/list/check/run/doctor` 主链路支持三个通用 adapter：
+当前 `fetch/list/check/run/doctor` 主链路支持五个通用 adapter：
 
 1. `raw_text_url`
    - 输入：URL、默认协议、source name。
@@ -317,7 +343,17 @@ plugproxy discover validate docs/proxy-sources.candidates.json
      - `protocol://ip:port`
    - 适配大多数 GitHub Raw、CDN Raw 和 TXT API。
 
-2. `json_url`
+2. `html_text_url` / `br_text_url`
+   - 输入：URL、默认协议、source name。
+   - 支持格式：
+     - 简单 HTML 页面中的 `ip:port`。
+     - `<br>` 分隔的接口结果。
+     - `<td>IP</td><td>PORT</td>` 这类轻量表格单元格。
+     - 显式 `protocol://ip:port`。
+   - 适配 89IP、快代理等中文免费代理页面的轻量输出。
+   - 不执行 JS，不绕过登录、验证码或付费墙；需要脚本渲染、分页会话或复杂列映射的页面仍后置。
+
+3. `json_url`
    - 输入：URL、默认协议、可选字段映射。
    - 支持 JSON 根结构：
      - 字符串数组，例如 `["1.1.1.1:8080", "http://2.2.2.2:8080"]`。
@@ -331,14 +367,24 @@ plugproxy discover validate docs/proxy-sources.candidates.json
    - 可用 `json.items_path`、`json.proxy_field`、`json.host_field`、`json.port_field`、`json.protocol_field` 覆盖默认映射。
    - `items_path` 只支持单层 key，不实现 JSONPath/JQ。
 
-3. `api_url`
+4. `api_url`
    - 第一版复用 `json_url` 解析器。
    - 额外支持 `headers`，用于设置公开 API 所需的 `Accept`、`User-Agent` 等请求头。
    - 不实现认证流程，不执行 JS，不绕过登录、验证码或付费墙。
 
-页面型 `html_table` 仍后置。页面型源需要独立限速、缓存和失败降级，不能影响主流程。
+复杂页面型 `html_table` 仍后置。页面型源需要独立限速、缓存和失败降级，不能影响主流程。
 
 配置示例：
+
+```json
+{
+  "name": "89ip-html",
+  "type": "html_text_url",
+  "url": "https://www.89ip.cn/tqdl.html?api=1&num=100&port=&address=&isp=&anonymity=&type=1",
+  "protocol_hint": "http",
+  "enabled": false
+}
+```
 
 ```json
 {

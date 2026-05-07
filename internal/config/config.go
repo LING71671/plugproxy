@@ -88,6 +88,18 @@ func BuildSources(cfg Config) ([]source.Source, error) {
 				Timeout:      timeout,
 				BodyLimit:    item.BodyLimit,
 			}))
+		case "html_text_url", "br_text_url":
+			timeout, err := sourceTimeout(item, source.DefaultRawTextTimeout)
+			if err != nil {
+				return nil, err
+			}
+			sources = append(sources, source.NewHTMLTextURL(source.RawTextURLOption{
+				Name:         item.Name,
+				URL:          item.URL,
+				ProtocolHint: model.Protocol(item.ProtocolHint),
+				Timeout:      timeout,
+				BodyLimit:    item.BodyLimit,
+			}))
 		case "json_url", "api_url":
 			timeout, err := sourceTimeout(item, source.DefaultJSONTimeout)
 			if err != nil {

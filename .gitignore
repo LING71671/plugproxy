@@ -1,6 +1,9 @@
 # Binaries
 bin/
 dist/
+!internal/web/dist/
+!internal/web/dist/**
+node_modules/
 *.exe
 
 # Local/editor state

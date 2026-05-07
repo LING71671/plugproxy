@@ -19,6 +19,64 @@
       "body_limit": 2097152
     },
     {
+      "name": "iplocate-http-cdn",
+      "type": "raw_text_url",
+      "url": "https://cdn.jsdelivr.net/gh/iplocate/free-proxy-list@main/protocols/http.txt",
+      "protocol_hint": "http",
+      "enabled": false,
+      "timeout": "12s",
+      "body_limit": 2097152
+    },
+    {
+      "name": "proxifly-http-cdn",
+      "type": "raw_text_url",
+      "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt",
+      "protocol_hint": "http",
+      "enabled": false,
+      "timeout": "12s",
+      "body_limit": 2097152
+    },
+    {
+      "name": "skillter-working-http-cdn",
+      "type": "raw_text_url",
+      "url": "https://cdn.jsdelivr.net/gh/Skillter/ProxyGather@master/proxies/working-proxies-http.txt",
+      "protocol_hint": "http",
+      "enabled": false,
+      "timeout": "12s",
+      "body_limit": 2097152
+    },
+    {
+      "name": "clarketm-raw-cdn",
+      "type": "raw_text_url",
+      "url": "https://cdn.jsdelivr.net/gh/clarketm/proxy-list@master/proxy-list-raw.txt",
+      "protocol_hint": "http",
+      "enabled": false,
+      "timeout": "12s",
+      "body_limit": 2097152
+    },
+    {
+      "name": "docip-free-json",
+      "type": "json_url",
+      "url": "https://www.docip.net/data/free.json",
+      "protocol_hint": "http",
+      "enabled": false,
+      "timeout": "12s",
+      "body_limit": 1048576,
+      "json": {
+        "items_path": "data",
+        "proxy_field": "ip"
+      }
+    },
+    {
+      "name": "89ip-html",
+      "type": "html_text_url",
+      "url": "https://www.89ip.cn/tqdl.html?api=1&num=100&port=&address=&isp=&anonymity=&type=1",
+      "protocol_hint": "http",
+      "enabled": false,
+      "timeout": "12s",
+      "body_limit": 1048576
+    },
+    {
       "name": "example-json",
       "type": "json_url",
       "url": "https://example.com/proxies.json",

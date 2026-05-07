@@ -112,7 +112,7 @@ plugproxy discover search -query "proxy sources" -ai -ai-provider responses-comp
 discover -> candidates -> validate source -> human review -> source config -> fetch -> check -> pool
 ```
 
-当前主采集链路已经支持 `raw_text_url`、`json_url` 和 `api_url` 源配置。候选源经过人工确认后，可以写入 `plugproxy.sources.json`：
+当前主采集链路已经支持 `raw_text_url`、`html_text_url`、`br_text_url`、`json_url` 和 `api_url` 源配置。候选源经过人工确认后，可以写入 `plugproxy.sources.json`：
 
 ```json
 {
@@ -130,7 +130,19 @@ discover -> candidates -> validate source -> human review -> source config -> fe
 plugproxy discover validate candidates.json -write-sources plugproxy.sources.candidates.json
 ```
 
-导出文件只包含验证通过且 `adapter_required=false` 的 `raw_text_url`、`json_url` 和 `api_url` 候选源，并统一写入 `"enabled": false`。推荐流程是先 review 这份文件，再手动合并到 `plugproxy.sources.json` 并开启可信源。
+导出文件只包含验证通过且 `adapter_required=false` 的 `raw_text_url`、`html_text_url`、`br_text_url`、`json_url` 和 `api_url` 候选源，并统一写入 `"enabled": false`。推荐流程是先 review 这份文件，再手动合并到 `plugproxy.sources.json` 并开启可信源。
+
+中文站点如果返回 `<br>` 分隔、简单 HTML 片段，或 `<td>IP</td><td>PORT</td>` 这种轻量表格单元格，可以使用 `html_text_url`：
+
+```json
+{
+  "name": "example-cn-html",
+  "type": "html_text_url",
+  "url": "https://example.cn/free-proxy",
+  "protocol_hint": "http",
+  "enabled": true
+}
+```
 
 JSON 候选源如果抽样验证能解析出代理，`discover validate` 会标记为 `adapter_required=false`，并输出 `recipe.parser=json_auto`。进入配置时可以使用自动解析，也可以补充轻量字段映射：
 

@@ -93,6 +93,36 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 }
 
+func TestMetricsAndUIEndpoints(t *testing.T) {
+	srv := New(pool.NewMemory(), slog.Default()).WithMetrics(func() any {
+		return map[string]any{"uptime_ms": 123}
+	})
+	server := httptest.NewServer(srv.Handler())
+	defer server.Close()
+
+	metricsResp, err := http.Get(server.URL + "/metrics.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metricsResp.Body.Close()
+	var metrics map[string]any
+	if err := json.NewDecoder(metricsResp.Body).Decode(&metrics); err != nil {
+		t.Fatal(err)
+	}
+	if metrics["uptime_ms"] != float64(123) {
+		t.Fatalf("unexpected metrics %#v", metrics)
+	}
+
+	uiResp, err := http.Get(server.URL + "/ui/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uiResp.Body.Close()
+	if uiResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected ui 200, got %d", uiResp.StatusCode)
+	}
+}
+
 func TestListProxiesFiltersAndPaginates(t *testing.T) {
 	proxyPool := pool.NewMemory()
 	proxyPool.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, Source: "one", HealthStatus: model.HealthHealthy})

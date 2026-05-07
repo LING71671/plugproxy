@@ -180,6 +180,11 @@ func TestCheckWithOptionsWritesCache(t *testing.T) {
 	if loaded[0].CheckCount != 1 || loaded[0].LastError == "" {
 		t.Fatalf("expected checked health fields, got %#v", loaded[0])
 	}
+
+	metrics := application.Metrics(RefreshOptions{})
+	if metrics.Check.Unsupported != 1 || metrics.Runtime.Goroutines == 0 || metrics.UptimeMS < 0 {
+		t.Fatalf("expected check metrics to be updated, got %#v", metrics)
+	}
 }
 
 func TestCheckWithOptionsSkipsRecentByTTL(t *testing.T) {
@@ -388,6 +393,10 @@ func TestFetchCheckWithOptionsDeduplicatesSourceProxies(t *testing.T) {
 	}
 	if report.Check.Scheduled != 1 || report.Check.Unsupported != 1 {
 		t.Fatalf("unexpected check stats %#v", report.Check)
+	}
+	metrics := application.Metrics(RefreshOptions{})
+	if metrics.Fetch.Added != 1 || metrics.Check.Scheduled != 1 || metrics.Pool.Total != 1 {
+		t.Fatalf("expected pipeline metrics, got %#v", metrics)
 	}
 }
 

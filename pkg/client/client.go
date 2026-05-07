@@ -110,6 +110,14 @@ func (c *Client) Sources(ctx context.Context) (map[string]any, error) {
 	return value, nil
 }
 
+func (c *Client) Metrics(ctx context.Context) (map[string]any, error) {
+	var value map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/metrics.json", nil, nil, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 func (c *Client) TriggerRefresh(ctx context.Context) (map[string]any, error) {
 	var value map[string]any
 	if err := c.doJSON(ctx, http.MethodPost, "/refresh", nil, nil, &value); err != nil {

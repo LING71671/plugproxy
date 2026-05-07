@@ -42,6 +42,7 @@
 - 增加 v0.2.0 tag release、跨平台二进制和 checksums。
 - 增加 v0.2.1 稳定性版本，收口 smart check scheduler、source 冷却、host 限流、错误分类、refresh 可观测和 discover 配置导出。
 - 增加 v0.3.0 工程基础版本，收口 atomic cache write、HTTP Transport 配置、refresh cancel、优雅关闭和日志配置。
+- 增加 v0.4.0 观测与控制台版本，提供 `/metrics.json` 和嵌入式 Svelte Console。
 
 ## 第五阶段：管理与可视化
 

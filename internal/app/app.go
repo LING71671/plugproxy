@@ -27,6 +27,8 @@ type App struct {
 	log             *slog.Logger
 	reportMu        sync.RWMutex
 	lastFetchReport FetchReport
+	lastCheckStats  CheckStats
+	startedAt       time.Time
 	refresh         refreshState
 	sourceMu        sync.Mutex
 	sourceStates    map[string]SourceState
@@ -59,6 +61,8 @@ type CheckOptions struct {
 	DeadBackoffMax   time.Duration
 	SkipUnsupported  bool
 	ProtocolFair     bool
+	SourceFair       bool
+	TailBiased       bool
 	Transport        checker.TransportOptions
 }
 
@@ -101,6 +105,7 @@ type CheckStats struct {
 	Failed             int                                             `json:"failed"`
 	ErrorTypes         map[string]int                                  `json:"error_types,omitempty"`
 	ByProtocol         map[model.Protocol]scheduler.CheckProtocolStats `json:"by_protocol,omitempty"`
+	BySource           map[string]scheduler.CheckSourceStats           `json:"by_source,omitempty"`
 }
 
 type PipelineReport struct {
@@ -116,10 +121,18 @@ type PipelineProgress struct {
 }
 
 type RefreshProgress struct {
-	TotalSources     int `json:"total_sources"`
-	CompletedSources int `json:"completed_sources"`
-	ScheduledChecks  int `json:"scheduled_checks"`
-	CompletedChecks  int `json:"completed_checks"`
+	TotalSources      int `json:"total_sources"`
+	CompletedSources  int `json:"completed_sources"`
+	SuccessfulSources int `json:"successful_sources"`
+	FailedSources     int `json:"failed_sources"`
+	SkippedSources    int `json:"skipped_sources"`
+	Fetched           int `json:"fetched"`
+	Added             int `json:"added"`
+	Duplicates        int `json:"duplicates"`
+	ScheduledChecks   int `json:"scheduled_checks"`
+	CompletedChecks   int `json:"completed_checks"`
+	FailedChecks      int `json:"failed_checks"`
+	UnsupportedChecks int `json:"unsupported_checks"`
 }
 
 type SourceState struct {
@@ -149,6 +162,7 @@ func NewWithSources(log *slog.Logger, sources []source.Source) *App {
 		pool:         pool.NewMemory(),
 		sources:      sources,
 		log:          log,
+		startedAt:    time.Now(),
 		sourceStates: make(map[string]SourceState),
 	}
 }
@@ -285,7 +299,11 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 	seenFetched := make(map[string]struct{})
 	seenChecks := make(map[string]struct{})
 	scheduleStats := CheckStats{}
-	progress := RefreshProgress{TotalSources: len(a.sources), CompletedSources: len(skippedReports)}
+	progress := RefreshProgress{
+		TotalSources:     len(a.sources),
+		CompletedSources: len(skippedReports),
+		SkippedSources:   len(skippedReports),
+	}
 	var progressMu sync.Mutex
 	emitProgress := func(phase string) {
 		if fetchOptions.Progress == nil {
@@ -324,10 +342,17 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 			checked := applyCheckResult(result)
 			if result.Unsupported {
 				stats.Unsupported++
+				progressMu.Lock()
+				progress.UnsupportedChecks++
+				progressMu.Unlock()
 			} else if !result.OK {
 				stats.Failed++
+				progressMu.Lock()
+				progress.FailedChecks++
+				progressMu.Unlock()
 			}
 			addErrorType(&stats, result.ErrorType)
+			addSourceOutcome(&stats, result.Proxy.Source, checked.HealthStatus, result.Unsupported, !result.OK)
 			switch checked.HealthStatus {
 			case model.HealthHealthy:
 				stats.Healthy++
@@ -406,6 +431,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 		report.Check = combineCheckStats(scheduleStats, <-outcomes)
 		report.FinishedAt = time.Now()
 		a.setFetchReport(report.Fetch)
+		a.setCheckStats(report.Check)
 		return report
 	}
 
@@ -421,10 +447,14 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 		progressMu.Unlock()
 		if result.Error != nil {
 			report.Fetch.FailedSources++
+			progressMu.Lock()
+			progress.FailedSources++
+			progressMu.Unlock()
 			sourceReport.Status = "failed"
 			sourceReport.Error = result.Error.Error()
 			sourceReport.SourceState = a.recordSourceResult(result.Source, false, fetchOptions)
 			report.Fetch.Sources = append(report.Fetch.Sources, sourceReport)
+			a.setFetchReport(report.Fetch)
 			a.log.Warn("source fetch failed", "source", result.Source, "error", result.Error)
 			emitProgress("fetching")
 			continue
@@ -432,6 +462,10 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 
 		report.Fetch.SuccessfulSources++
 		report.Fetch.Fetched += len(result.Proxies)
+		progressMu.Lock()
+		progress.SuccessfulSources++
+		progress.Fetched += len(result.Proxies)
+		progressMu.Unlock()
 		sourceReport.Status = "ok"
 		sourceReport.SourceState = a.recordSourceResult(result.Source, true, fetchOptions)
 		report.Fetch.Sources = append(report.Fetch.Sources, sourceReport)
@@ -440,15 +474,22 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 			id := proxyID(proxy)
 			if _, ok := seenFetched[id]; ok {
 				report.Fetch.Duplicates++
+				progressMu.Lock()
+				progress.Duplicates++
+				progressMu.Unlock()
 				continue
 			}
 			seenFetched[id] = struct{}{}
 			merged := a.pool.AddSeenAndGet(proxy)
 			report.Fetch.Added++
+			progressMu.Lock()
+			progress.Added++
+			progressMu.Unlock()
 			if matchesFilter(merged, checkOptions.Filter) {
 				checkCandidates = append(checkCandidates, merged)
 			}
 		}
+		a.setFetchReport(report.Fetch)
 		if !submitChecks(checkCandidates) {
 			break
 		}
@@ -476,6 +517,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 
 	report.FinishedAt = time.Now()
 	a.setFetchReport(report.Fetch)
+	a.setCheckStats(report.Check)
 	return report
 }
 
@@ -502,6 +544,7 @@ func (a *App) CheckWithOptions(ctx context.Context, options CheckOptions) CheckS
 			a.log.Warn("proxy cache write failed", "path", options.CachePath, "error", err)
 		}
 	}
+	a.setCheckStats(stats)
 	return stats
 }
 
@@ -534,6 +577,7 @@ func combineCheckStats(schedule CheckStats, outcomes CheckStats) CheckStats {
 		Failed:             outcomes.Failed,
 		ErrorTypes:         outcomes.ErrorTypes,
 		ByProtocol:         schedule.ByProtocol,
+		BySource:           combineSourceStats(schedule.BySource, outcomes.BySource),
 	}
 }
 
@@ -587,6 +631,7 @@ func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, 
 			stats.Failed++
 		}
 		addErrorType(&stats, result.ErrorType)
+		addSourceOutcome(&stats, result.Proxy.Source, proxy.HealthStatus, result.Unsupported, !result.OK)
 		switch proxy.HealthStatus {
 		case model.HealthHealthy:
 			stats.Healthy++
@@ -671,6 +716,8 @@ func schedulerOptions(options CheckOptions, maxChecks int) scheduler.CheckOption
 		DeadBackoffMax:   options.DeadBackoffMax,
 		SkipUnsupported:  options.SkipUnsupported,
 		ProtocolFair:     options.ProtocolFair,
+		SourceFair:       options.SourceFair,
+		TailBiased:       options.TailBiased,
 	}
 }
 
@@ -688,6 +735,9 @@ func mergeScheduleStats(target *CheckStats, stats scheduler.CheckStats, selected
 	if target.ByProtocol == nil {
 		target.ByProtocol = make(map[model.Protocol]scheduler.CheckProtocolStats)
 	}
+	if target.BySource == nil {
+		target.BySource = make(map[string]scheduler.CheckSourceStats)
+	}
 	for protocol, value := range stats.ByProtocol {
 		current := target.ByProtocol[protocol]
 		current.Total += value.Total
@@ -702,6 +752,72 @@ func mergeScheduleStats(target *CheckStats, stats scheduler.CheckStats, selected
 		current.SkippedBackoff += value.SkippedBackoff
 		target.ByProtocol[protocol] = current
 	}
+	for source, value := range stats.BySource {
+		current := target.BySource[source]
+		current.Total += value.Total
+		if selectedAsLimit {
+			current.SkippedLimit += value.Selected + value.SkippedLimit
+		} else {
+			current.Selected += value.Selected
+			current.SkippedLimit += value.SkippedLimit
+		}
+		current.SkippedRecent += value.SkippedRecent
+		current.SkippedUnsupported += value.SkippedUnsupported
+		current.SkippedBackoff += value.SkippedBackoff
+		current.SelectedHead += value.SelectedHead
+		current.SelectedMiddle += value.SelectedMiddle
+		current.SelectedTail += value.SelectedTail
+		current.Healthy += value.Healthy
+		current.Degraded += value.Degraded
+		current.Dead += value.Dead
+		current.Unsupported += value.Unsupported
+		current.Failed += value.Failed
+		target.BySource[source] = current
+	}
+}
+
+func addSourceOutcome(stats *CheckStats, source string, status model.HealthStatus, unsupported bool, failed bool) {
+	if stats.BySource == nil {
+		stats.BySource = make(map[string]scheduler.CheckSourceStats)
+	}
+	if source == "" {
+		source = "unknown"
+	}
+	value := stats.BySource[source]
+	switch status {
+	case model.HealthHealthy:
+		value.Healthy++
+	case model.HealthDegraded:
+		value.Degraded++
+	case model.HealthDead:
+		value.Dead++
+	}
+	if unsupported {
+		value.Unsupported++
+	} else if failed {
+		value.Failed++
+	}
+	stats.BySource[source] = value
+}
+
+func combineSourceStats(schedule map[string]scheduler.CheckSourceStats, outcomes map[string]scheduler.CheckSourceStats) map[string]scheduler.CheckSourceStats {
+	if len(schedule) == 0 && len(outcomes) == 0 {
+		return nil
+	}
+	combined := make(map[string]scheduler.CheckSourceStats, len(schedule)+len(outcomes))
+	for source, value := range schedule {
+		combined[source] = value
+	}
+	for source, value := range outcomes {
+		current := combined[source]
+		current.Healthy += value.Healthy
+		current.Degraded += value.Degraded
+		current.Dead += value.Dead
+		current.Unsupported += value.Unsupported
+		current.Failed += value.Failed
+		combined[source] = current
+	}
+	return combined
 }
 
 func (a *App) activeSources(options FetchOptions) ([]source.Source, []SourceFetchReport) {
@@ -767,6 +883,8 @@ func (a *App) ServeWithRefresh(addr string, refreshOptions RefreshOptions) error
 func (a *App) Handler(refreshOptions RefreshOptions) http.Handler {
 	return server.New(a.pool, a.log).WithSourceReport(func() any {
 		return a.LastFetchReport()
+	}).WithMetrics(func() any {
+		return a.Metrics(refreshOptions)
 	}).WithRefresh(func(ctx context.Context) any {
 		return a.TriggerRefresh(ctx, refreshOptions)
 	}, func() any {
@@ -786,4 +904,16 @@ func (a *App) setFetchReport(report FetchReport) {
 	a.reportMu.Lock()
 	defer a.reportMu.Unlock()
 	a.lastFetchReport = report
+}
+
+func (a *App) LastCheckStats() CheckStats {
+	a.reportMu.RLock()
+	defer a.reportMu.RUnlock()
+	return a.lastCheckStats
+}
+
+func (a *App) setCheckStats(stats CheckStats) {
+	a.reportMu.Lock()
+	defer a.reportMu.Unlock()
+	a.lastCheckStats = stats
 }

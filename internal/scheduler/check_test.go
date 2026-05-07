@@ -218,6 +218,36 @@ func TestScheduleChecksSortsSameStatusBySeenCount(t *testing.T) {
 	assertIDs(t, ids(schedule.Selected), []string{"http://high:1", "http://low:1"})
 }
 
+func TestScheduleChecksSourceFairLimit(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	proxies := []model.Proxy{
+		sourceProxy("http://a1:1", "big", 0, 3),
+		sourceProxy("http://a2:1", "big", 1, 3),
+		sourceProxy("http://a3:1", "big", 2, 3),
+		sourceProxy("http://b1:1", "small", 0, 1),
+	}
+
+	schedule := ScheduleChecks(proxies, CheckOptions{Now: now, MaxChecks: 2, SourceFair: true})
+	assertIDs(t, ids(schedule.Selected), []string{"http://a1:1", "http://b1:1"})
+	if schedule.Stats.BySource["big"].Selected != 1 || schedule.Stats.BySource["small"].Selected != 1 {
+		t.Fatalf("unexpected source stats %#v", schedule.Stats.BySource)
+	}
+}
+
+func TestScheduleChecksTailBiasedWithinSource(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	proxies := make([]model.Proxy, 0, 10)
+	for i := 0; i < 10; i++ {
+		proxies = append(proxies, sourceProxy("http://p"+string(rune('0'+i))+":1", "source", i, 10))
+	}
+
+	schedule := ScheduleChecks(proxies, CheckOptions{Now: now, MaxChecks: 3, SourceFair: true, TailBiased: true})
+	assertIDs(t, ids(schedule.Selected), []string{"http://p9:1", "http://p8:1", "http://p7:1"})
+	if schedule.Stats.BySource["source"].SelectedTail != 3 {
+		t.Fatalf("expected tail selections, got %#v", schedule.Stats.BySource["source"])
+	}
+}
+
 func checkedProxy(id string, status model.HealthStatus, checkedAt time.Time, score int) model.Proxy {
 	return model.Proxy{
 		ID:            id,
@@ -232,6 +262,17 @@ func checkedProxy(id string, status model.HealthStatus, checkedAt time.Time, sco
 
 func uncheckedProxy(id string, protocol model.Protocol) model.Proxy {
 	return model.Proxy{ID: id, Address: id, Protocol: protocol}
+}
+
+func sourceProxy(id, source string, index int, total int) model.Proxy {
+	return model.Proxy{
+		ID:          id,
+		Address:     id,
+		Protocol:    model.ProtocolHTTP,
+		Source:      source,
+		SourceIndex: index,
+		SourceTotal: total,
+	}
 }
 
 func ids(proxies []model.Proxy) []string {

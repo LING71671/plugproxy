@@ -137,12 +137,21 @@ func fetchOne(ctx context.Context, src source.Source, limiter *hostlimit.Limiter
 	defer release()
 
 	proxies, err := src.Fetch(ctx)
+	annotateSourcePosition(proxies)
 	return Result{
 		Source:    src.Name(),
 		Proxies:   proxies,
 		Error:     err,
 		ErrorType: errtype.Classify(err),
 		Duration:  time.Since(start),
+	}
+}
+
+func annotateSourcePosition(proxies []model.Proxy) {
+	total := len(proxies)
+	for index := range proxies {
+		proxies[index].SourceIndex = index
+		proxies[index].SourceTotal = total
 	}
 }
 

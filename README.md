@@ -2,7 +2,7 @@
 
 plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池管理和接入工具。
 
-> 当前状态：v0.3.0 可用预览版。
+> 当前状态：v0.4.0 可用预览版。
 
 ## 目标
 
@@ -125,6 +125,8 @@ go run ./cmd/plugproxy discover validate candidates.json -workers 128 -per-host-
 
 ```text
 GET /health
+GET /ui
+GET /metrics.json
 GET /sources
 GET /refresh
 POST /refresh
@@ -156,7 +158,7 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 健康状态会写入 `.plugproxy.cache.json`，独立执行一次 `check` 后，下一次 `get/list/run` 会复用历史健康评分。
 
-`check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议公平抽样。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。高并发检测还可以通过 `-connect-timeout`、`-tls-handshake-timeout`、`-response-header-timeout`、`-idle-conn-timeout`、`-max-idle-conns` 和 `-max-idle-conns-per-host` 控制 HTTP Transport 行为。
+`check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议和 source 公平抽样。`-tail-biased` 会在每个源内部优先抽取靠后的代理，用于验证“尾部是否更健康”的假设。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。高并发检测还可以通过 `-connect-timeout`、`-tls-handshake-timeout`、`-response-header-timeout`、`-idle-conn-timeout`、`-max-idle-conns` 和 `-max-idle-conns-per-host` 控制 HTTP Transport 行为。
 
 ## 代理源配置
 
@@ -180,9 +182,10 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 }
 ```
 
-当前运行时支持 `raw_text_url`、`json_url` 和 `api_url`：
+当前运行时支持 `raw_text_url`、`html_text_url`、`br_text_url`、`json_url` 和 `api_url`：
 
 - `raw_text_url`：解析 `ip:port` 和 `protocol://ip:port`。
+- `html_text_url` / `br_text_url`：从简单 HTML、`<br>` 分隔文本、页面片段或 `<td>IP</td><td>PORT</td>` 表格单元格中抽取代理，用于 89IP、快代理这类中文免费代理页面；不执行 JS，不绕过验证码或登录。
 - `json_url`：解析字符串数组、对象数组，以及 `data/items/results/proxies` 等根对象数组。
 - `api_url`：第一版按 JSON API 处理，可通过 `headers` 设置 `Accept`、`User-Agent` 等公开 API 请求头。
 
@@ -201,6 +204,17 @@ JSON/API 字段映射可用 `json.items_path`、`json.proxy_field`、`json.host_
 `run` 默认开启动态刷新控制器。`-refresh-interval` 是基础间隔，不是写死节拍；控制器会根据健康代理水位、unchecked 积压、上一轮失败情况和抖动计算下一次刷新。刷新会在源返回后尽快去重、调度检测并入池，不必等待所有源都抓取完成；最终仍只写一次 cache。可用 `-refresh=false` 关闭，或用 `-refresh-min-interval`、`-refresh-max-interval`、`-min-healthy` 等参数调整策略。
 
 `GET /refresh` 会显示当前 `phase`、进度、跳过原因、下一次刷新时间和最近一次 pipeline 报告；重复 `POST /refresh` 不会重入正在运行的 refresh。`POST /refresh/cancel` 可以取消当前 refresh，未运行时会返回 `skipped/not_running`。
+
+## 管理控制台
+
+`run` 会嵌入一个轻量 Svelte 管理控制台：
+
+```text
+GET /ui           打开控制台
+GET /metrics.json 获取控制台使用的观测快照
+```
+
+控制台以 NOC/Grafana/Bloomberg 风格展示代理池、采集源、检测调度、刷新状态和运行时资源。关键数字会从旧值平滑过渡到新值；pipeline 动效来自 `/metrics.json` 的真实 delta，不播放无数据假动画。前端构建产物已嵌入 Go 二进制，运行时不需要 Node。
 
 刷新任务串行执行，上一轮未结束时会跳过新一轮。HTTP API 提供：
 

@@ -16,6 +16,7 @@ type SourceKind string
 const (
 	KindRawText              SourceKind = "raw_text"
 	KindJSON                 SourceKind = "json"
+	KindHTMLText             SourceKind = "html_text"
 	KindHTMLTable            SourceKind = "html_table"
 	KindAPI                  SourceKind = "api"
 	KindCrawlerCodeReference SourceKind = "crawler_code_reference"

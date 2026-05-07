@@ -29,7 +29,7 @@ import (
 )
 
 var (
-	version = "0.3.0"
+	version = "0.4.0"
 	commit  = "unknown"
 	date    = "unknown"
 )
@@ -128,6 +128,8 @@ func main() {
 		deadCheckTTL := fs.Duration("dead-check-ttl", 12*time.Hour, "smart profile TTL for dead proxies")
 		deadBackoffMax := fs.Duration("dead-backoff-max", 72*time.Hour, "maximum smart profile dead proxy backoff")
 		protocolFair := fs.Bool("protocol-fair", false, "distribute limited checks across protocols")
+		sourceFair := fs.Bool("source-fair", false, "distribute limited checks across sources")
+		tailBiased := fs.Bool("tail-biased", false, "prefer later entries from each source when source fair sampling is enabled")
 		skipUnsupported := fs.Bool("skip-unsupported", false, "skip protocols that the checker cannot support")
 		connectTimeout := fs.Duration("connect-timeout", 5*time.Second, "proxy connection timeout")
 		tlsHandshakeTimeout := fs.Duration("tls-handshake-timeout", 5*time.Second, "TLS handshake timeout")
@@ -140,13 +142,19 @@ func main() {
 			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
 			"workers": false, "protocol": false, "target": false, "timeout": false, "max-checks": false, "check-ttl": false,
 			"check-profile": false, "healthy-check-ttl": false, "degraded-check-ttl": false, "dead-check-ttl": false,
-			"dead-backoff-max": false, "protocol-fair": true, "skip-unsupported": true,
+			"dead-backoff-max": false, "protocol-fair": true, "source-fair": true, "tail-biased": true, "skip-unsupported": true,
 			"connect-timeout": false, "tls-handshake-timeout": false, "response-header-timeout": false,
 			"idle-conn-timeout": false, "max-idle-conns": false, "max-idle-conns-per-host": false,
 		}))
 		if schedulerProfile(*checkProfile) == scheduler.ProfileSmart {
 			if !flagWasSet(fs, "protocol-fair") {
 				*protocolFair = true
+			}
+			if !flagWasSet(fs, "source-fair") {
+				*sourceFair = true
+			}
+			if !flagWasSet(fs, "tail-biased") {
+				*tailBiased = true
 			}
 			if !flagWasSet(fs, "skip-unsupported") {
 				*skipUnsupported = true
@@ -180,6 +188,8 @@ func main() {
 			DeadCheckTTL:     *deadCheckTTL,
 			DeadBackoffMax:   *deadBackoffMax,
 			ProtocolFair:     *protocolFair,
+			SourceFair:       *sourceFair,
+			TailBiased:       *tailBiased,
 			SkipUnsupported:  *skipUnsupported,
 			Transport: checker.TransportOptions{
 				ConnectTimeout:        *connectTimeout,
@@ -281,6 +291,8 @@ func main() {
 		deadCheckTTL := fs.Duration("dead-check-ttl", 12*time.Hour, "smart profile TTL for dead proxies")
 		deadBackoffMax := fs.Duration("dead-backoff-max", 72*time.Hour, "maximum smart profile dead proxy backoff")
 		protocolFair := fs.Bool("protocol-fair", true, "distribute limited checks across protocols")
+		sourceFair := fs.Bool("source-fair", true, "distribute limited checks across sources")
+		tailBiased := fs.Bool("tail-biased", true, "prefer later entries from each source when source fair sampling is enabled")
 		skipUnsupported := fs.Bool("skip-unsupported", true, "skip protocols that the checker cannot support")
 		skipCheck := fs.Bool("skip-check", true, "skip proxy checking on startup")
 		refresh := fs.Bool("refresh", true, "enable background fetch and check refresh")
@@ -310,7 +322,7 @@ func main() {
 			"min-healthy-ratio": false, "unchecked-threshold": false, "refresh-failure-backoff": false,
 			"per-host-workers": false, "source-failure-threshold": false, "source-cooldown": false,
 			"check-profile": false, "healthy-check-ttl": false, "degraded-check-ttl": false, "dead-check-ttl": false,
-			"dead-backoff-max": false, "protocol-fair": true, "skip-unsupported": true,
+			"dead-backoff-max": false, "protocol-fair": true, "source-fair": true, "tail-biased": true, "skip-unsupported": true,
 			"connect-timeout": false, "tls-handshake-timeout": false, "response-header-timeout": false,
 			"idle-conn-timeout": false, "max-idle-conns": false, "max-idle-conns-per-host": false,
 			"shutdown-timeout": false, "log-level": false, "log-format": false,
@@ -346,6 +358,8 @@ func main() {
 			DeadCheckTTL:     *deadCheckTTL,
 			DeadBackoffMax:   *deadBackoffMax,
 			ProtocolFair:     *protocolFair,
+			SourceFair:       *sourceFair,
+			TailBiased:       *tailBiased,
 			SkipUnsupported:  *skipUnsupported,
 			Transport: checker.TransportOptions{
 				ConnectTimeout:        *connectTimeout,
@@ -424,11 +438,11 @@ Usage:
   plugproxy init [-config plugproxy.sources.json] [-force]
   plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
   plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m]
-  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-profile full] [-connect-timeout 5s]
+  plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-profile full] [-source-fair=false] [-tail-biased=false] [-connect-timeout 5s]
   plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
   plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
   plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
-  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-profile smart] [-shutdown-timeout 10s] [-log-level info] [-log-format text]
+  plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-profile smart] [-source-fair=true] [-tail-biased=true] [-shutdown-timeout 10s] [-log-level info] [-log-format text]
   plugproxy discover repo owner/name
   plugproxy discover url URL
   plugproxy discover validate FILE [-write-sources plugproxy.sources.candidates.json]
@@ -702,6 +716,8 @@ func sourceTypeForCandidate(candidate discover.CandidateSource) (string, bool) {
 	switch kind {
 	case discover.KindRawText:
 		return "raw_text_url", true
+	case discover.KindHTMLText:
+		return "html_text_url", true
 	case discover.KindJSON:
 		return "json_url", true
 	case discover.KindAPI:

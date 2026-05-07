@@ -43,6 +43,23 @@ func TestBuildSourcesSupportsJSONAndAPI(t *testing.T) {
 	}
 }
 
+func TestBuildSourcesSupportsHTMLText(t *testing.T) {
+	enabled := true
+	sources, err := BuildSources(Config{Sources: []SourceConfig{
+		{Name: "html", Type: "html_text_url", URL: "https://example.com/free", Enabled: &enabled},
+		{Name: "br", Type: "br_text_url", URL: "https://example.com/api", Enabled: &enabled},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 sources, got %d", len(sources))
+	}
+	if sources[0].Name() != "html" || sources[1].Name() != "br" {
+		t.Fatalf("unexpected sources %#v", sources)
+	}
+}
+
 func TestLoadParsesJSONConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sources.json")

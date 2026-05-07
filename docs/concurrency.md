@@ -20,7 +20,7 @@ plugproxy 的并发能力不只追求更大的 worker 数，而是追求在免�
 - `run` 后台刷新串行执行，避免多轮 refresh 重入，并暴露 `phase`、`progress` 和跳过原因。
 - 源请求已有 timeout、body_limit 和 context。
 - 采集失败会被源级隔离，所有源失败时可以回退缓存。
-- v0.3.0 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress、discover write-sources、atomic cache write、transport 配置和 graceful shutdown。
+- v0.4.0 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress、discover write-sources、atomic cache write、transport 配置、graceful shutdown、`/metrics.json` 和嵌入式 Svelte Console。
 
 ## 总体思路
 
@@ -109,10 +109,14 @@ plugproxy run -workers 128 -max-checks 300 -check-profile smart
 - `full` profile 使用 `-check-ttl`、`-max-checks` 和稳定排序，保持 CLI 兼容。
 - `smart` profile 对 healthy/degraded/dead 使用不同复检 TTL，死亡代理按连续失败次数退避。
 - `smart` profile 默认跳过 SOCKS4 unsupported，计入 `skipped_unsupported`。
-- 有限预算下可按协议公平抽样，避免单一协议或前几个源占满 `max-checks`。
+- 有限预算下可按协议和 source 公平抽样，避免单一协议、单一大源或前几个源占满 `max-checks`。
+- source 内部支持 tail-biased 抽样，优先检查靠后的条目，用真实检测结果验证“尾部更新、更健康”的假设。
 - 候选代理按 `unchecked > healthy > degraded > dead` 稳定排序。
 - 同状态下更久未检测的代理优先，再按 `health_score` 高者优先，最后按 `seen_count` 高者优先。
 - `-max-checks > 0` 时只检测排序后的前 N 个，其余计入 `skipped_limit`。
+- `-source-fair=true` 时按 source 分桶轮询取样，小源也能获得检测预算。
+- `-tail-biased=true` 时在每个 source 桶内按状态分层后优先抽取尾部，再抽中段和头部。
+- `check/run` 报告中的 `by_source` 会展示每个源的 `selected_head`、`selected_middle`、`selected_tail`，用于判断健康代理是否集中在某个源或某个文件区间。
 
 后续可以从简单排序演进到优先级队列，但第一版不需要复杂调度器。
 
@@ -251,7 +255,7 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 
 ## 观测指标
 
-建议先以 JSON 报告暴露，不急着接 Prometheus。
+当前先以 JSON 报告和嵌入式控制台暴露，不急着接 Prometheus。
 
 源级指标：
 
@@ -286,6 +290,20 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 - `fetch_report`
 - `check_stats`
 
+## 管理控制台
+
+v0.4.0 增加 `GET /metrics.json` 和 `GET /ui`。`/metrics.json` 是统一观测数据面，控制台每秒轮询一次，并基于新旧快照 delta 驱动数字 tween 和 pipeline 脉冲。
+
+控制台视觉基准：
+
+- 网络运维终端、Grafana 深色面板和 Bloomberg 终端的混合风格。
+- 高密度、低装饰，避免大渐变、光球、玻璃拟态和营销式 hero。
+- 所有关键数字使用 `requestAnimationFrame` 从旧值平滑过渡到新值，禁止跳值。
+- pipeline 脉冲只来自真实 delta，每秒最多 20 个采样脉冲；没有数据时不播放假流量。
+- 前端使用 Svelte + Vite，构建产物 embed 到 Go 二进制；运行时不需要 Node。
+
+前端结构为未来 Wails GUI 预留：`web/src` 中的 API adapter 可从 HTTP fetch 替换为 Wails bridge，组件和可视化逻辑保持复用。
+
 ## 默认值建议
 
 默认值需要保守，用户可以手动调高。
@@ -309,8 +327,8 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 
 - 已增加 `check-ttl`，跳过最近检测过的代理。
 - 已增加 `max-checks`，限制单轮检测规模。
-- 已增加 smart check profile：分层复检、死亡退避、协议公平、跳过 unsupported。
-- 已增加检测调度统计：`scheduled`、`skipped_recent`、`skipped_limit`、`skipped_unsupported`、`skipped_backoff`、`by_protocol`。
+- 已增加 smart check profile：分层复检、死亡退避、协议公平、source 公平、尾部偏置抽样、跳过 unsupported。
+- 已增加检测调度统计：`scheduled`、`skipped_recent`、`skipped_limit`、`skipped_unsupported`、`skipped_backoff`、`by_protocol`、`by_source`。
 - 已增强 refresh/status 阶段、进度、取消和跳过原因。
 - 已增加 source 冷却、host 级并发限制和错误分类报告。
 - 已增强 doctor/source report 源级耗时与错误汇总。

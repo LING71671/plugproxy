@@ -41,7 +41,7 @@ func TestParseJSONProxiesObjectArrayHostPortProtocol(t *testing.T) {
 }
 
 func TestParseJSONProxiesObjectProxyFields(t *testing.T) {
-	cases := []string{"proxy", "url", "address", "addr"}
+	cases := []string{"proxy", "url", "address", "addr", "ip", "host"}
 	for _, field := range cases {
 		data := []byte(`[{"` + field + `":"http://1.1.1.1:8080"}]`)
 		proxies, err := ParseJSONProxies(data, "", "json", JSONConfig{})

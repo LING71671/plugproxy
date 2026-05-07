@@ -90,14 +90,23 @@ func TestSourcesConfigFromCandidatesExportsDisabledSupportedSources(t *testing.T
 			Status:          discover.StatusValid,
 			AdapterRequired: true,
 		},
+		{
+			URL:             "https://example.com/br.html",
+			SourceKind:      discover.KindHTMLText,
+			Status:          discover.StatusValid,
+			AdapterRequired: false,
+		},
 	})
 
-	if len(cfg.Sources) != 1 {
-		t.Fatalf("expected one exported source, got %#v", cfg)
+	if len(cfg.Sources) != 2 {
+		t.Fatalf("expected two exported sources, got %#v", cfg)
 	}
 	item := cfg.Sources[0]
 	if item.Type != "json_url" || item.Enabled == nil || *item.Enabled || item.JSON == nil {
 		t.Fatalf("unexpected exported source %#v", item)
+	}
+	if cfg.Sources[1].Type != "html_text_url" || cfg.Sources[1].Enabled == nil || *cfg.Sources[1].Enabled {
+		t.Fatalf("unexpected html exported source %#v", cfg.Sources[1])
 	}
 }
 

@@ -76,6 +76,8 @@ func TestClientStatsAndRefresh(t *testing.T) {
 		switch r.URL.Path {
 		case "/stats":
 			_ = json.NewEncoder(w).Encode(model.ProxyStats{Total: 2})
+		case "/metrics.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{"uptime_ms": 123})
 		case "/refresh":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "running"})
 		case "/refresh/cancel":
@@ -93,6 +95,14 @@ func TestClientStatsAndRefresh(t *testing.T) {
 	}
 	if stats.Total != 2 {
 		t.Fatalf("expected total 2, got %d", stats.Total)
+	}
+
+	metrics, err := c.Metrics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics["uptime_ms"] != float64(123) {
+		t.Fatalf("unexpected metrics %#v", metrics)
 	}
 
 	refresh, err := c.TriggerRefresh(context.Background())

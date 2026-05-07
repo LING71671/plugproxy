@@ -6,14 +6,17 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 var (
-	urlPattern        = regexp.MustCompile(`https?://[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]+`)
-	proxyLinePattern  = regexp.MustCompile(`(?m)^\s*(?:(https?|socks4|socks5)://)?((?:\d{1,3}\.){3}\d{1,3}):(\d{2,5})\s*$`)
-	htmlTablePattern  = regexp.MustCompile(`(?is)<table[^>]*>.*?</table>`)
-	methodNamePattern = regexp.MustCompile(`(?m)def\s+(freeProxy\d+|[A-Za-z_][A-Za-z0-9_]*Proxy[A-Za-z0-9_]*)\s*\(`)
+	urlPattern         = regexp.MustCompile(`https?://[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]+`)
+	proxyLinePattern   = regexp.MustCompile(`(?m)^\s*(?:(https?|socks4|socks5)://)?((?:\d{1,3}\.){3}\d{1,3}):(\d{2,5})\s*$`)
+	proxyAnyPattern    = regexp.MustCompile(`(?i)\b(?:(https?|socks4|socks5)://)?((?:\d{1,3}\.){3}\d{1,3}|[a-z0-9][a-z0-9.-]*\.[a-z]{2,}):(\d{2,5})\b`)
+	htmlTablePattern   = regexp.MustCompile(`(?is)<table[^>]*>.*?</table>`)
+	htmlTDProxyPattern = regexp.MustCompile(`(?is)<td[^>]*>\s*((?:\d{1,3}\.){3}\d{1,3})\s*</td>\s*<td[^>]*>\s*(\d{2,5})\s*</td>`)
+	methodNamePattern  = regexp.MustCompile(`(?m)def\s+(freeProxy\d+|[A-Za-z_][A-Za-z0-9_]*Proxy[A-Za-z0-9_]*)\s*\(`)
 )
 
 func ExtractURLs(text string) []string {
@@ -66,11 +69,24 @@ func CandidateName(rawURL string) string {
 }
 
 func InferProtocolHint(rawURL, content string) string {
-	lower := strings.ToLower(rawURL + "\n" + content)
+	for _, match := range proxyAnyPattern.FindAllStringSubmatch(content, -1) {
+		if match[1] != "" {
+			return strings.ToLower(match[1])
+		}
+	}
+
+	parsed, err := url.Parse(rawURL)
+	lower := strings.ToLower(rawURL)
+	if err == nil {
+		lower = strings.ToLower(parsed.Host + " " + parsed.Path + " " + parsed.RawQuery)
+	}
 	for _, protocol := range []string{"socks5", "socks4", "https", "http"} {
 		if strings.Contains(lower, protocol) {
 			return protocol
 		}
+	}
+	if LooksLikeProxyList(content) || LooksLikeEmbeddedProxyList(content) || LooksLikeSplitProxyTable(content) {
+		return "http"
 	}
 	return ""
 }
@@ -101,6 +117,8 @@ func InferKind(rawURL, content string) SourceKind {
 		return KindAPI
 	case format == FormatJSON:
 		return KindJSON
+	case format == FormatHTML && (LooksLikeEmbeddedProxyList(content) || LooksLikeSplitProxyTable(content)):
+		return KindHTMLText
 	case format == FormatHTML:
 		return KindHTMLTable
 	default:
@@ -110,6 +128,23 @@ func InferKind(rawURL, content string) SourceKind {
 
 func LooksLikeProxyList(content string) bool {
 	return len(proxyLinePattern.FindAllStringSubmatch(content, 3)) > 0
+}
+
+func LooksLikeEmbeddedProxyList(content string) bool {
+	return len(proxyAnyPattern.FindAllStringSubmatch(content, 3)) > 0
+}
+
+func LooksLikeSplitProxyTable(content string) bool {
+	for _, match := range htmlTDProxyPattern.FindAllStringSubmatch(content, 3) {
+		if len(match) != 3 {
+			continue
+		}
+		port, err := strconv.Atoi(match[2])
+		if err == nil && port > 0 && port <= 65535 {
+			return true
+		}
+	}
+	return false
 }
 
 func LooksLikeSourceList(content string) bool {

@@ -169,7 +169,10 @@ func (p *MemoryPool) List(filter Filter) []model.Proxy {
 	}
 
 	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].CreatedAt.Before(items[j].CreatedAt)
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		}
+		return items[i].ID < items[j].ID
 	})
 
 	return items

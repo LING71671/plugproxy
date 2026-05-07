@@ -129,6 +129,8 @@ func (v Validator) validateOne(ctx context.Context, candidate CandidateSource) C
 	candidate.Format = analyzed[0].Format
 	candidate.SourceKind = analyzed[0].SourceKind
 	candidate.ProtocolHint = analyzed[0].ProtocolHint
+	candidate.AdapterRequired = analyzed[0].AdapterRequired
+	candidate.Recipe = analyzed[0].Recipe
 	if analyzed[0].Confidence > candidate.Confidence {
 		candidate.Confidence = analyzed[0].Confidence
 	}
