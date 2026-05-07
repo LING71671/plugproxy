@@ -1,224 +1,145 @@
 # plugproxy
 
-plugproxy 是一个使用 Go 编写的轻量级代理采集、检测、代理池管理和接入工具。
+plugproxy 是一个轻量的代理采集、检测和代理池服务。它可以从公开代理源抓取代理，做并发检测，给代理打健康状态，然后通过 CLI、HTTP API 或 Go SDK 给其他程序取用。
 
-> 当前状态：v0.5.0 Core Foundation。基础 CLI/API/SDK、主配置、源管理、cache 维护和轻量观测已收口。
+> 当前版本：v0.5.0 Core Foundation。
+> 这一版重点收口基础能力：主配置、源管理、cache 维护、健康 API、检测调度、动态刷新和轻量观测。
 
-## 目标
+## 适合谁
 
-- 从多种免费代理源采集代理。
-- 并发检测代理，并保留有价值的健康状态与元数据。
-- 通过 CLI、HTTP API 和 Go SDK 让任何项目都能轻松接入代理池。
-- 支持 GitHub、Web、Raw URL 和可选 AI 搜索发现候选代理源。
-- 以 worker pool 支持高并发抓取、验证和检测。
-- 保持轻量：单个 Go 二进制，无强制外部服务依赖。
+- 想快速搭一个本地代理池。
+- 想把免费代理源采集、去重、检测、缓存这条链路自动化。
+- 想通过 HTTP API 或 Go SDK 给自己的程序拿代理。
+- 想研究代理源质量、检测调度、并发刷新和长期运行策略。
+
+先说清楚：免费代理质量很不稳定，抓到很多不等于可用很多。plugproxy 的价值不是保证每个代理都活，而是把“抓取、检测、跳过、退避、缓存、取用”这套流程跑稳。
 
 ## 安装
 
-从 GitHub Releases 下载适合系统的压缩包，解压后把 `plugproxy` 或 `plugproxy.exe` 放到 `PATH` 中。
+从 GitHub Releases 下载对应系统的压缩包，解压后把 `plugproxy` 或 `plugproxy.exe` 放到 `PATH`。
+
+验证安装：
 
 ```bash
 plugproxy version
-plugproxy init
-plugproxy doctor
 ```
 
 也可以直接从源码运行：
 
 ```bash
 go run ./cmd/plugproxy version
-go run ./cmd/plugproxy init
-go run ./cmd/plugproxy doctor
 ```
 
-## 快速开始
+## 五分钟跑起来
+
+### 1. 初始化代理源
 
 ```bash
 plugproxy init
-plugproxy config init
-plugproxy doctor
-plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json
-plugproxy check -source-workers 32 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -target-fallbacks https://api.ipify.org -timeout 8s -connect-timeout 5s -max-checks 300 -check-profile smart
-plugproxy get -cache .plugproxy.cache.json -strategy fastest -protocol http
-plugproxy run -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -shutdown-timeout 10s -log-level info -max-checks 300
-plugproxy watch -api http://127.0.0.1:8899
 ```
 
-Go 项目接入见 [Go SDK 接入](docs/sdk.md)。
+这会生成 `plugproxy.sources.json`。如果你不生成这个文件，程序也会使用内置默认源，但显式文件更方便后续管理。
 
-## 架构
-
-```mermaid
-flowchart LR
-    subgraph Discovery["代理源发现"]
-        GH["GitHub API\nREADME / sources / fetcher"]
-        WEB["Web Search\n可选 AI Provider"]
-        RAW["Raw URL\nTXT / JSON / HTML"]
-        AI["AI Analyst\n搜索规划 / 结果理解 / 规则草案"]
-    end
-
-    subgraph Candidates["候选源层"]
-        CS["CandidateSource\n候选待审"]
-        VR["Validate Workers\n抽样验证 / 去重 / 打分"]
-        SR["SourceRecipe\n解析规则草案"]
-    end
-
-    subgraph Fetch["采集与检测"]
-        SRC["Source Adapter\nRaw / JSON / HTML / API"]
-        FW["Fetch Workers\n高并发采集"]
-        CK["Check Workers\n高并发检测"]
-        POOL["Proxy Pool\n健康评分 / 策略选择"]
-    end
-
-    subgraph Access["接入层"]
-        CLI["CLI"]
-        API["HTTP API"]
-        SDK["Go SDK"]
-        UI["轻量管理面板\n后续"]
-    end
-
-    GH --> CS
-    WEB --> AI --> CS
-    RAW --> CS
-    CS --> VR --> SR
-    SR --> SRC
-    SRC --> FW --> CK --> POOL
-    POOL --> CLI
-    POOL --> API
-    POOL --> SDK
-    POOL --> UI
-```
-
-## 逻辑链
-
-```text
-discover -> candidates -> validate -> review -> source config -> fetch -> check -> pool -> CLI / HTTP API / SDK
-```
-
-plugproxy 的核心原则是“发现候选源”和“使用可用代理”分离。AI、GitHub 搜索和页面分析只进入候选源队列；代理必须经过抽样验证、采集、检测和健康评分后，才会进入代理池。
-
-## 扩展点
-
-- `AIProvider`：适配 OpenAI、Responses-compatible 服务，以及后续 Anthropic、Gemini、OpenRouter、Ollama 等。
-- `Source`：适配 Raw TXT、JSON、HTML 表格、公开 API 和项目源码引用的页面型源。
-- `Checker`：扩展 HTTP、HTTPS、SOCKS4、SOCKS5 和多目标检测。
-- `Pool`：扩展内存池、持久化池、健康评分和选择策略。
-- `Access`：扩展 CLI、HTTP API、Go SDK 和后续嵌入式前端管理面板。
-
-## 当前命令
-
-```bash
-go run ./cmd/plugproxy version
-go run ./cmd/plugproxy init
-go run ./cmd/plugproxy config init
-go run ./cmd/plugproxy config validate
-go run ./cmd/plugproxy doctor
-go run ./cmd/plugproxy fetch -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json
-go run ./cmd/plugproxy list -source-workers 32 -cache .plugproxy.cache.json
-go run ./cmd/plugproxy get -source-workers 32 -cache .plugproxy.cache.json -strategy fastest -protocol http
-go run ./cmd/plugproxy stats -cache .plugproxy.cache.json
-go run ./cmd/plugproxy check -source-workers 32 -per-host-workers 4 -cache .plugproxy.cache.json -workers 128 -protocol http -target https://httpbin.org/ip -target-fallbacks https://api.ipify.org -timeout 8s -connect-timeout 5s -response-header-timeout 5s -max-checks 300 -check-profile smart
-go run ./cmd/plugproxy run -source-workers 32 -per-host-workers 4 -source-cooldown 15m -cache .plugproxy.cache.json -addr 127.0.0.1:8899 -skip-check=false -refresh=true -refresh-interval 5m -refresh-min-interval 30s -refresh-max-interval 30m -shutdown-timeout 10s -log-level info -max-checks 300 -check-profile smart
-go run ./cmd/plugproxy sources list
-go run ./cmd/plugproxy sources validate
-go run ./cmd/plugproxy cache stats
-go run ./cmd/plugproxy watch -api http://127.0.0.1:8899
-go run ./cmd/plugproxy discover repo jhao104/proxy_pool -workers 32
-go run ./cmd/plugproxy discover url https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/sources/http.txt
-go run ./cmd/plugproxy discover search -query "free proxy list socks5" -limit 10 -workers 32
-go run ./cmd/plugproxy discover validate candidates.json -workers 128 -per-host-workers 4 -write-sources plugproxy.sources.candidates.json
-```
-
-运行后可用的 HTTP API：
-
-```text
-GET /health
-GET /healthz
-GET /readyz
-GET /ui
-GET /metrics.json
-GET /sources
-GET /refresh
-POST /refresh
-GET /stats
-GET /proxies
-GET /proxies?protocol=http&status=healthy&limit=100&offset=0
-GET /proxy
-GET /proxy?protocol=http
-GET /proxy?strategy=fastest
-GET /proxy?strategy=fastest&protocol=http&healthy=true
-```
-
-## 健康评分
-
-`check` 会按协议检测代理并更新内存代理池中的健康状态：
-
-- HTTP/HTTPS：使用标准库 HTTP Transport 检测。
-- SOCKS5：使用 Go 官方扩展包 `golang.org/x/net/proxy` 检测。
-- SOCKS4：第一版明确标记为 unsupported，不参与健康代理判断。
-
-健康字段包括 `health_score`、`health_status`、`check_count`、`consecutive_failures`、`last_success_at`、`last_failure_at` 和 `last_error`。
-
-状态分级：
-
-- `unchecked`：尚未检测。
-- `healthy`：分数较高且最近一次检测成功。
-- `degraded`：可疑或分数中等。
-- `dead`：连续失败或分数过低。
-
-健康状态会写入 `.plugproxy.cache.json`，独立执行一次 `check` 后，下一次 `get/list/run` 会复用历史健康评分。
-
-`check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议和 source 公平抽样。`-tail-biased` 会在每个源内部优先抽取靠后的代理，用于验证“尾部是否更健康”的假设。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。高并发检测还可以通过 `-connect-timeout`、`-tls-handshake-timeout`、`-response-header-timeout`、`-idle-conn-timeout`、`-max-idle-conns` 和 `-max-idle-conns-per-host` 控制 HTTP Transport 行为。检测目标支持 `-target`、`-target-http`、`-target-https`、`-target-fallbacks` 和 `-body-contains`，用于降低单一检测目标故障导致的误判。
-
-取用代理时按 `healthy -> degraded -> unchecked` 排序，`dead` 默认不作为可用代理返回：`plugproxy get` 和 HTTP `/proxy` 默认启用 `exclude_dead`。`list` 仍默认展示全量，方便诊断；需要列出可用候选时可加 `-exclude-dead=true` 或 `/proxies?exclude_dead=true`。
-
-## 代理源配置
-
-默认会读取 `plugproxy.sources.json`。如果文件不存在，plugproxy 会启用内置的第一批高优先级 Raw/API TXT 源。
-
-配置示例见 [plugproxy.sources.example.json](plugproxy.sources.example.json)：
-
-```json
-{
-  "sources": [
-    {
-      "name": "proxyscrape-http",
-      "type": "raw_text_url",
-      "url": "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text",
-      "protocol_hint": "http",
-      "enabled": true,
-      "timeout": "12s",
-      "body_limit": 2097152
-    }
-  ]
-}
-```
-
-当前运行时支持 `raw_text_url`、`html_text_url`、`br_text_url`、`json_url` 和 `api_url`：
-
-- `raw_text_url`：解析 `ip:port` 和 `protocol://ip:port`。
-- `html_text_url` / `br_text_url`：从简单 HTML、`<br>` 分隔文本、页面片段或 `<td>IP</td><td>PORT</td>` 表格单元格中抽取代理，用于 89IP、快代理这类中文免费代理页面；不执行 JS，不绕过验证码或登录。
-- `json_url`：解析字符串数组、对象数组，以及 `data/items/results/proxies` 等根对象数组。
-- `api_url`：第一版按 JSON API 处理，可通过 `headers` 设置 `Accept`、`User-Agent` 等公开 API 请求头。
-
-JSON/API 字段映射可用 `json.items_path`、`json.proxy_field`、`json.host_field`、`json.port_field`、`json.protocol_field` 做轻量覆盖；`items_path` 只支持单层 key。更完整的源接入说明见 [代理源清单](docs/proxy-sources.md)。
-
-## 主配置与源管理
-
-v0.5.0 新增 `plugproxy.config.json` 作为主配置文件，`plugproxy.sources.json` 继续只管理代理源。配置优先级为 CLI 参数 > 主配置文件 > 默认值。
+可选：初始化主配置文件。
 
 ```bash
 plugproxy config init
 plugproxy config validate
-plugproxy config print
-plugproxy fetch -app-config plugproxy.config.json
-plugproxy check -app-config plugproxy.config.json
-plugproxy run -app-config plugproxy.config.json
 ```
 
-源管理命令用于人工维护配置闭环：
+这会生成 `plugproxy.config.json`。配置优先级是：CLI 参数 > 主配置文件 > 默认值。
+
+### 2. 抓取代理
 
 ```bash
+plugproxy fetch -source-workers 32 -per-host-workers 4
+```
+
+结果会写入 `.plugproxy.cache.json`。输出里重点看：
+
+- `successful_sources`：成功抓取的源数量
+- `failed_sources`：失败源数量
+- `fetched`：源里抓到的代理数量
+- `added`：去重后加入池子的数量
+
+### 3. 检测一批代理
+
+先用小批量检测，别一上来全量打满：
+
+```bash
+plugproxy check -workers 64 -max-checks 300 -check-profile smart -target https://httpbin.org/ip -target-fallbacks https://api.ipify.org
+```
+
+输出里重点看：
+
+- `scheduled`：本轮实际进入检测的代理数
+- `healthy` / `degraded` / `dead`：检测后的状态
+- `skipped_unsupported`：当前跳过的 unsupported 协议，例如 SOCKS4
+- `error_types`：失败原因分布，例如 timeout、connection_error
+
+### 4. 取一个可用代理
+
+```bash
+plugproxy get -strategy fastest -protocol http
+```
+
+`get` 默认不会返回 `dead`。选择顺序大致是：
+
+```text
+healthy -> degraded -> unchecked
+```
+
+如果你想看池子全量状态，用：
+
+```bash
+plugproxy list
+plugproxy list -exclude-dead=true
+plugproxy stats
+```
+
+### 5. 启动常驻服务
+
+```bash
+plugproxy run -addr 127.0.0.1:8899 -skip-check=false -refresh=true -max-checks 300
+```
+
+服务启动后可以访问：
+
+```text
+GET  http://127.0.0.1:8899/healthz
+GET  http://127.0.0.1:8899/readyz
+GET  http://127.0.0.1:8899/stats
+GET  http://127.0.0.1:8899/proxy?strategy=fastest&protocol=http
+GET  http://127.0.0.1:8899/metrics.json
+POST http://127.0.0.1:8899/refresh
+POST http://127.0.0.1:8899/refresh/cancel
+```
+
+观察运行状态：
+
+```bash
+plugproxy watch -api http://127.0.0.1:8899
+```
+
+## 常用命令速查
+
+```bash
+plugproxy version
+plugproxy init
+plugproxy doctor
+
+plugproxy config init
+plugproxy config validate
+plugproxy config print
+
+plugproxy fetch
+plugproxy check -max-checks 300 -check-profile smart
+plugproxy list
+plugproxy get -strategy fastest -protocol http
+plugproxy stats
+plugproxy run -addr 127.0.0.1:8899 -skip-check=false
+plugproxy watch
+
 plugproxy sources list
 plugproxy sources validate
 plugproxy sources test
@@ -226,71 +147,129 @@ plugproxy sources add -name example -type raw_text_url -url https://example.com/
 plugproxy sources enable example
 plugproxy sources disable example
 plugproxy sources remove example
-```
 
-## 采集缓存
-
-`fetch/list/get/check/run` 默认会把成功采集到的代理写入 `.plugproxy.cache.json`。当一轮采集所有源都失败时，会自动回退读取缓存，避免免费源短暂超时导致代理池为空。
-
-`fetch` 会输出本轮源级采集报告，包括成功源、失败源、冷却跳过源、去重数量、错误分类、缓存是否被复用和每个源耗时。连续失败源会进入短期冷却，同一 host 的源请求也会受 `-per-host-workers` 限制。HTTP API 的 `GET /sources` 会返回最近一次采集报告。
-
-缓存也会保留检测后的健康字段。缓存中的代理与新采集代理按 `protocol://address` 合并；新代理首次出现时初始化为 `unchecked` 和 50 分，已存在代理再次出现时保留历史健康评分。
-
-v0.5.0 增加 cache 维护命令：
-
-```bash
 plugproxy cache stats
 plugproxy cache compact -max-entries 50000 -drop-dead-after 24h -drop-stale-after 168h
 plugproxy cache repair
+
+plugproxy discover search -query "free proxy list socks5" -limit 10
+plugproxy discover validate candidates.json -write-sources plugproxy.sources.candidates.json
 ```
 
-cache 文件带 schema version，旧字段缺失仍可读取；坏 JSON 会被隔离为 `.bad*` 文件，避免后续写入覆盖问题现场。
+## 两个配置文件
 
-## 自动刷新
+plugproxy 有两个配置文件，职责分开：
 
-`run` 默认开启动态刷新控制器。`-refresh-interval` 是基础间隔，不是写死节拍；控制器会根据健康代理水位、unchecked 积压、上一轮失败情况和抖动计算下一次刷新。刷新会在源返回后尽快去重、调度检测并入池，不必等待所有源都抓取完成；最终仍只写一次 cache。可用 `-refresh=false` 关闭，或用 `-refresh-min-interval`、`-refresh-max-interval`、`-min-healthy` 等参数调整策略。
+- `plugproxy.sources.json`：代理源列表。
+- `plugproxy.config.json`：运行参数，例如 server、cache、fetch、check、scheduler、refresh、logging。
 
-`GET /refresh` 会显示当前 `phase`、进度、跳过原因、下一次刷新时间和最近一次 pipeline 报告；重复 `POST /refresh` 不会重入正在运行的 refresh。`POST /refresh/cancel` 可以取消当前 refresh，未运行时会返回 `skipped/not_running`。
-
-## 轻量观测
-
-`run` 继续保留 v0.4.0 的嵌入式 Svelte 管理控制台入口，但 v0.5.0 暂停继续开发 UI，优先收口基础能力：
-
-```text
-GET /ui           打开控制台
-GET /metrics.json 获取控制台使用的观测快照
-```
-
-`plugproxy watch` 可轮询 `/metrics.json`，用一行文本持续查看 pool、check 和 refresh 摘要：
+初始化：
 
 ```bash
-plugproxy watch -api http://127.0.0.1:8899 -interval 1s
+plugproxy init
+plugproxy config init
 ```
 
-刷新任务串行执行，上一轮未结束时会跳过新一轮。HTTP API 提供：
+验证：
+
+```bash
+plugproxy sources validate
+plugproxy config validate
+```
+
+使用主配置启动：
+
+```bash
+plugproxy run -app-config plugproxy.config.json
+```
+
+## 支持的代理源
+
+当前运行时支持：
+
+- `raw_text_url`：解析 `ip:port` 和 `protocol://ip:port`
+- `html_text_url`：从简单 HTML、`<br>` 文本、表格单元格里抽取代理
+- `br_text_url`：兼容 `<br>` 分隔的页面或接口
+- `json_url`：解析 JSON 字符串数组、对象数组、`data/items/results/proxies` 包装数组
+- `api_url`：按 JSON API 处理，支持 headers
+
+更完整说明见 [代理源清单](docs/proxy-sources.md) 和 [代理源发现爬虫设计](docs/source-discovery.md)。
+
+## 健康状态
+
+代理进入池子后有四种状态：
+
+- `unchecked`：抓到了，但还没检测
+- `healthy`：检测成功、分数较高、最近没有连续失败
+- `degraded`：可能可用，但质量较低或检测结果一般
+- `dead`：连续失败或健康分过低
+
+默认取用策略：
+
+- `plugproxy get` 和 `/proxy` 默认排除 `dead`
+- `list` 和 `/proxies` 默认展示全量，方便排查
+- 需要只看可用候选时使用 `-exclude-dead=true` 或 `?exclude_dead=true`
+
+SOCKS5 已支持检测。SOCKS4 当前明确标记为 unsupported，smart profile 下会跳过，避免浪费检测 worker。
+
+## 检测与调度
+
+常用检测参数：
+
+```bash
+plugproxy check \
+  -workers 64 \
+  -max-checks 300 \
+  -check-profile smart \
+  -target https://httpbin.org/ip \
+  -target-fallbacks https://api.ipify.org \
+  -connect-timeout 5s \
+  -response-header-timeout 5s
+```
+
+`smart` profile 会做：
+
+- 未检测代理优先
+- healthy/degraded/dead 分层复检
+- dead 代理死亡退避
+- SOCKS4 unsupported 跳过
+- 有限预算下按协议和 source 公平抽样
+- 可选 tail-biased，验证同源靠后代理是否更可能健康
+
+## HTTP API
+
+常用 API：
 
 ```text
-POST /refresh  异步触发一次刷新
-GET /refresh   查看最近一次刷新状态
-POST /refresh/cancel  取消当前刷新
+GET  /healthz
+GET  /readyz
+GET  /stats
+GET  /proxies
+GET  /proxies?protocol=http&status=healthy&limit=100
+GET  /proxy
+GET  /proxy?strategy=fastest&protocol=http
+GET  /sources
+GET  /refresh
+POST /refresh
+POST /refresh/cancel
+GET  /metrics.json
 ```
 
-`run` 支持 `-shutdown-timeout` 做优雅关闭，收到 `Ctrl+C` 或 SIGTERM 时会取消后台刷新并等待 HTTP server 退出。日志可用 `-log-level` 和 `-log-format` 调整，日志写入 stderr，命令 JSON 输出仍写 stdout。
+`/ui` 入口仍保留，但 v0.5.0 暂停继续开发管理面板，当前优先使用 CLI、HTTP API 和 `/metrics.json`。
 
 ## Go SDK
 
-推荐外部项目通过 `pkg/client` 连接常驻 plugproxy 服务：
+推荐通过 `pkg/client` 连接常驻服务：
 
 ```go
 c := client.New("http://127.0.0.1:8899")
 p, err := c.GetProxy(ctx, client.GetProxyOptions{
 	Strategy: "fastest",
 	Protocol: model.ProtocolHTTP,
-	Healthy:  true,
 })
 ```
 
-需要业务进程自带代理池时，可以使用 `pkg/plugproxy` 启动嵌入式服务。详细示例见 [Go SDK 接入](docs/sdk.md)。
+也可以用 `pkg/plugproxy` 在业务进程内嵌入服务。见 [Go SDK 接入](docs/sdk.md)。
 
 ## 项目结构
 
@@ -299,13 +278,15 @@ cmd/plugproxy/       CLI 入口
 internal/app/        应用编排
 internal/cache/      代理缓存
 internal/checker/    代理检测
-internal/config/     代理源配置和默认源
+internal/config/     配置和默认源
+internal/discover/   代理源发现、验证和 AI Provider
 internal/fetcher/    并发代理源采集
 internal/pool/       代理池接口与内存实现
-internal/server/     轻量 HTTP API
+internal/server/     HTTP API
 internal/source/     代理源接口与实现
-internal/discover/   代理源发现、验证和 AI Provider
+pkg/client/          HTTP Client SDK
 pkg/model/           公开代理数据模型
+pkg/plugproxy/       嵌入式 SDK
 docs/                项目文档
 ```
 

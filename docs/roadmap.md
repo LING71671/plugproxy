@@ -23,7 +23,8 @@
 ## 第三阶段：检测与评分
 
 - 支持 HTTP 和 HTTPS 代理检测。
-- 支持 SOCKS4 和 SOCKS5 代理检测。
+- 支持 SOCKS5 代理检测。
+- SOCKS4 当前明确标记为 unsupported，smart profile 下默认跳过。
 - 支持可配置检测目标。
 - 增加延迟、失败次数、成功率、最后可用时间等评分字段。
 - 增加 `any`、`fastest`、`healthy` 等选择策略。
@@ -42,13 +43,13 @@
 - 增加 v0.2.0 tag release、跨平台二进制和 checksums。
 - 增加 v0.2.1 稳定性版本，收口 smart check scheduler、source 冷却、host 限流、错误分类、refresh 可观测和 discover 配置导出。
 - 增加 v0.3.0 工程基础版本，收口 atomic cache write、HTTP Transport 配置、refresh cancel、优雅关闭和日志配置。
-- 增加 v0.4.0 观测与控制台版本，提供 `/metrics.json` 和嵌入式 Svelte Console。
+- 增加 v0.4.0 观测版本，提供 `/metrics.json` 和实验性嵌入式 UI 入口。
 - 增加 v0.5.0 Core Foundation，收口代理使用语义、检测 fallback target、主配置、sources/cache 管理命令、`/healthz`、`/readyz` 和 `watch`。
 
 ## 第五阶段：管理与可视化
 
 - 增加可选轻量持久化。
-- 嵌入式管理面板已保留入口，v0.5.0 暂停继续开发 UI。
+- 实验性嵌入式 UI 入口已保留，v0.5.0 暂停继续开发 UI。
 - 已支持 sources 基础启停、增删、验证和导出。
 - 后续再做更完整的代理状态查看、手动检测和可视化运营面板。
 

@@ -292,26 +292,15 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 - `fetch_report`
 - `check_stats`
 
-## 管理控制台与轻量观测
+## 轻量观测
 
-v0.4.0 增加 `GET /metrics.json` 和 `GET /ui`。`/metrics.json` 是统一观测数据面，控制台每秒轮询一次，并基于新旧快照 delta 驱动数字 tween 和 pipeline 脉冲。
+`GET /metrics.json` 是统一观测数据面，暴露 pool、fetch、check、refresh、runtime 和运行配置摘要。
 
 v0.5.0 暂停继续开发 UI，保留 `/ui` 兼容入口，把重点放在基础能力和轻量观测：
 
 - `GET /healthz`：进程存活。
 - `GET /readyz`：代理池是否有可用代理。
 - `plugproxy watch`：轮询 `/metrics.json`，输出 pool/check/refresh 摘要。
-- `GET /metrics.json` 继续承载 pool、fetch、check、refresh、runtime 和运行配置摘要。
-
-控制台视觉基准：
-
-- 网络运维终端、Grafana 深色面板和 Bloomberg 终端的混合风格。
-- 高密度、低装饰，避免大渐变、光球、玻璃拟态和营销式 hero。
-- 所有关键数字使用 `requestAnimationFrame` 从旧值平滑过渡到新值，禁止跳值。
-- pipeline 脉冲只来自真实 delta，每秒最多 20 个采样脉冲；没有数据时不播放假流量。
-- 前端使用 Svelte + Vite，构建产物 embed 到 Go 二进制；运行时不需要 Node。
-
-前端结构为未来 Wails GUI 预留：`web/src` 中的 API adapter 可从 HTTP fetch 替换为 Wails bridge，组件和可视化逻辑保持复用。
 
 ## 默认值建议
 
