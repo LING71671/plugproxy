@@ -257,6 +257,93 @@ GET  /metrics.json
 
 `/ui` 入口仍保留，但 v0.5.x 暂停继续开发管理面板，当前优先使用 CLI、HTTP API 和 `/metrics.json`。
 
+## 给 AI 助手的一键集成提示词
+
+如果你不熟悉代码，也可以把下面整段复制给你的 AI 编程助手，让它把 plugproxy 接进你的项目。这个提示词默认让 AI 优先用最稳的 HTTP API 方式；如果你的项目本身是 Go，也可以让它改用 Go SDK。
+
+```text
+你是我的工程助手。请把 plugproxy 代理池集成到当前项目里。
+
+目标：
+1. 从克隆项目、准备 plugproxy、启动服务开始，完整完成集成。
+2. 在本地或项目运行环境中启动 plugproxy，监听 http://127.0.0.1:8899。
+3. 让当前项目需要代理请求时，从 plugproxy 获取代理，而不是写死代理地址。
+4. 默认只使用 plugproxy 返回的可用候选代理；不要手动使用 dead 代理。
+5. 给我留下清晰的启动、验证和排错命令。
+
+请按这个流程做：
+
+一、先确认工作目录和克隆状态
+- 如果我已经在目标项目目录里，就直接使用当前目录。
+- 如果我还没有项目代码，先问我要项目 Git 地址，然后执行：
+  git clone <我的项目地址>
+  cd <项目目录>
+- 不要把 plugproxy 源码克隆到我的业务项目里面，除非我明确要求改 plugproxy 本身。
+- 如果只是使用 plugproxy，优先下载 Release 二进制；不要为了使用它而 vendor 整个仓库。
+
+二、探测项目
+- 判断项目语言、包管理器、启动命令和 HTTP 请求库。
+- 如果是 Go 项目，优先使用 github.com/LING71671/plugproxy/pkg/client。
+- 如果不是 Go 项目，使用 HTTP API：GET http://127.0.0.1:8899/proxy?strategy=fastest&protocol=http。
+- 不要大改业务结构；只在发请求的位置增加“从 plugproxy 获取代理并应用”的小封装。
+
+三、安装或准备 plugproxy
+- 优先从 GitHub Releases 下载最新 plugproxy 二进制：https://github.com/LING71671/plugproxy/releases/latest
+- 如果当前环境已经有 plugproxy，先运行：
+  plugproxy version
+- 如果不能下载 Release，再从源码构建 plugproxy：
+  git clone https://github.com/LING71671/plugproxy.git
+  cd plugproxy
+  go build -o bin/plugproxy ./cmd/plugproxy
+  ./bin/plugproxy version
+- 回到我的业务项目目录，在项目根目录初始化配置：
+  plugproxy init
+  plugproxy config init
+  plugproxy config validate
+- 先抓取和小批量检测：
+  plugproxy fetch -source-workers 32 -per-host-workers 4
+  plugproxy check -workers 64 -max-checks 300 -check-profile smart -target https://httpbin.org/ip -target-fallbacks https://api.ipify.org
+
+四、启动服务
+- 本地开发启动命令：
+  plugproxy run -addr 127.0.0.1:8899 -skip-check=false -refresh=true -max-checks 300
+- 验证服务：
+  curl http://127.0.0.1:8899/healthz
+  curl http://127.0.0.1:8899/readyz
+  curl "http://127.0.0.1:8899/proxy?strategy=fastest&protocol=http"
+- 如果 readyz 暂时失败，说明还没有可用代理；先看：
+  plugproxy stats
+  plugproxy watch -api http://127.0.0.1:8899
+
+五、集成到当前项目
+- 新增一个很小的 ProxyProvider 或 getProxy 函数。
+- 它调用 plugproxy 的 /proxy 接口，读取返回 JSON 里的 protocol 和 address。
+- 拼成代理 URL，例如：http://IP:PORT 或 socks5://IP:PORT。
+- 当前项目发外部 HTTP 请求时，通过这个代理 URL 设置代理。
+- 请求失败时，允许重新向 plugproxy 获取一个新代理再重试一次；不要无限重试。
+- plugproxy 不可用时，必须给出清晰错误；不要静默失败。
+
+六、Go 项目可用示例
+- 添加依赖：
+  go get github.com/LING71671/plugproxy@v0.5.1
+- 使用 pkg/client：
+  c := client.New("http://127.0.0.1:8899")
+  p, err := c.GetProxy(ctx, client.GetProxyOptions{
+      Strategy: "fastest",
+      Protocol: model.ProtocolHTTP,
+  })
+  proxyURL, err := p.URL()
+
+七、交付结果
+- 列出你改了哪些文件。
+- 给出启动 plugproxy 的命令。
+- 给出启动当前项目的命令。
+- 给出验证代理真的被使用的命令或最小测试。
+- 不要提交 git commit，除非我明确要求。
+```
+
+如果你的 AI 不够聪明，就只要求它完成两件事：先启动 `plugproxy run`，再让项目通过 `GET /proxy?strategy=fastest&protocol=http` 拿代理。
+
 ## Go SDK
 
 推荐通过 `pkg/client` 连接常驻服务：
