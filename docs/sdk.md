@@ -45,6 +45,8 @@ c.ListProxies(ctx, client.ListOptions{Status: model.HealthHealthy, Limit: 20})
 c.Stats(ctx)
 c.Sources(ctx)
 c.Metrics(ctx)
+c.Health(ctx)
+c.Ready(ctx)
 c.TriggerRefresh(ctx)
 c.RefreshStatus(ctx)
 c.CancelRefresh(ctx)
@@ -95,4 +97,4 @@ func main() {
 }
 ```
 
-嵌入式 SDK 暴露启动、关闭、获取代理、列出代理、触发刷新和取消刷新。更细的源管理、检测策略和管理面板接口后续再逐步开放。
+嵌入式 SDK 暴露启动、关闭、获取代理、列出代理、健康检查、就绪检查、触发刷新和取消刷新。`GetProxyOptions.ExcludeDead` 可显式控制是否排除死亡代理；服务端 `/proxy` 默认不会返回 `dead`。

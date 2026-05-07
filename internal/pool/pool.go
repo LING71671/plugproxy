@@ -5,8 +5,12 @@ import "github.com/LING71671/plugproxy/pkg/model"
 type Strategy string
 
 const (
-	StrategyAny     Strategy = "any"
-	StrategyFastest Strategy = "fastest"
+	StrategyAny               Strategy = "any"
+	StrategyFastest           Strategy = "fastest"
+	StrategyRandom            Strategy = "random"
+	StrategyRoundRobin        Strategy = "round_robin"
+	StrategyLeastRecentlyUsed Strategy = "least_recently_used"
+	StrategyWeighted          Strategy = "weighted"
 )
 
 type Filter struct {

@@ -90,6 +90,10 @@ func TestClientStatsAndRefresh(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "running"})
 		case "/refresh/cancel":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "cancelling"})
+		case "/healthz":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "/readyz":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ready"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -127,6 +131,22 @@ func TestClientStatsAndRefresh(t *testing.T) {
 	}
 	if cancelled["status"] != "cancelling" {
 		t.Fatalf("unexpected cancel status %#v", cancelled)
+	}
+
+	health, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health["status"] != "ok" {
+		t.Fatalf("unexpected health status %#v", health)
+	}
+
+	ready, err := c.Ready(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready["status"] != "ready" {
+		t.Fatalf("unexpected ready status %#v", ready)
 	}
 }
 

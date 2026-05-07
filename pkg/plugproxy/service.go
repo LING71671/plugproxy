@@ -26,6 +26,8 @@ type Config struct {
 	SourceWorkers         int
 	CheckWorkers          int
 	TargetURL             string
+	TargetURLs            []string
+	BodyContains          string
 	CheckTimeout          time.Duration
 	ConnectTimeout        time.Duration
 	TLSHandshakeTimeout   time.Duration
@@ -144,6 +146,20 @@ func (s *Service) CancelRefresh(ctx context.Context) (map[string]any, error) {
 	return s.client.CancelRefresh(ctx)
 }
 
+func (s *Service) Health(ctx context.Context) (map[string]any, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("plugproxy service is not started")
+	}
+	return s.client.Health(ctx)
+}
+
+func (s *Service) Ready(ctx context.Context) (map[string]any, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("plugproxy service is not started")
+	}
+	return s.client.Ready(ctx)
+}
+
 func (s *Service) refreshOptions() app.RefreshOptions {
 	return app.RefreshOptions{
 		Fetch: app.FetchOptions{
@@ -155,6 +171,8 @@ func (s *Service) refreshOptions() app.RefreshOptions {
 		Check: app.CheckOptions{
 			Workers:         s.config.CheckWorkers,
 			TargetURL:       s.config.TargetURL,
+			TargetURLs:      s.config.TargetURLs,
+			BodyContains:    s.config.BodyContains,
 			Timeout:         s.config.CheckTimeout,
 			CachePath:       s.config.CachePath,
 			CacheWrite:      true,

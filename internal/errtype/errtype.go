@@ -14,12 +14,15 @@ type Type string
 const (
 	Timeout             Type = "timeout"
 	ConnectionError     Type = "connection_error"
+	DNSError            Type = "dns_error"
+	TLSError            Type = "tls_error"
 	HTTPStatus          Type = "http_status"
 	BodyLimit           Type = "body_limit"
 	ParseError          Type = "parse_error"
 	ContextCancelled    Type = "context_cancelled"
 	ProtocolUnsupported Type = "protocol_unsupported"
 	ResponseError       Type = "response_error"
+	TargetError         Type = "target_error"
 	Unknown             Type = "unknown"
 )
 
@@ -74,8 +77,15 @@ func Classify(err error) Type {
 	switch {
 	case strings.Contains(text, "unsupported protocol"):
 		return ProtocolUnsupported
+	case strings.Contains(text, "no such host"),
+		strings.Contains(text, "server misbehaving"),
+		strings.Contains(text, "dns"):
+		return DNSError
+	case strings.Contains(text, "tls"),
+		strings.Contains(text, "certificate"),
+		strings.Contains(text, "x509"):
+		return TLSError
 	case strings.Contains(text, "connection refused"),
-		strings.Contains(text, "no such host"),
 		strings.Contains(text, "network is unreachable"),
 		strings.Contains(text, "connection reset"),
 		strings.Contains(text, "connectex"):

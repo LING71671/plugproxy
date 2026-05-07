@@ -20,7 +20,7 @@ plugproxy 的并发能力不只追求更大的 worker 数，而是追求在免�
 - `run` 后台刷新串行执行，避免多轮 refresh 重入，并暴露 `phase`、`progress` 和跳过原因。
 - 源请求已有 timeout、body_limit 和 context。
 - 采集失败会被源级隔离，所有源失败时可以回退缓存。
-- v0.4.0 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress、discover write-sources、atomic cache write、transport 配置、graceful shutdown、`/metrics.json` 和嵌入式 Svelte Console。
+- v0.5.0 已收口 smart scheduler、source cooldown、host limit、error type、refresh phase/progress、discover write-sources、atomic cache write、transport 配置、graceful shutdown、主配置、sources/cache 管理命令、`/metrics.json`、`watch` 和基础健康 API。
 
 ## 总体思路
 
@@ -184,6 +184,8 @@ HTTP/HTTPS 检测继续使用标准库 `http.Transport`，当前已支持配置�
 可做事项：
 
 - cache 写入已使用同目录临时文件加原子替换，避免中途失败留下坏文件。
+- v0.5.0 cache 文件带 schema version，旧 cache 可读，坏 JSON 会隔离为 `.bad*` 文件。
+- v0.5.0 增加 `cache stats`、`cache compact` 和 `cache repair`，用于长期运行后的池子维护。
 - 大缓存写入只在状态有变化时执行。
 - refresh 中 fetch/check 完成后统一写一次。
 - 后续可增加轻量索引字段，例如 `last_seen_at`、`seen_count`。
@@ -290,9 +292,16 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 - `fetch_report`
 - `check_stats`
 
-## 管理控制台
+## 管理控制台与轻量观测
 
 v0.4.0 增加 `GET /metrics.json` 和 `GET /ui`。`/metrics.json` 是统一观测数据面，控制台每秒轮询一次，并基于新旧快照 delta 驱动数字 tween 和 pipeline 脉冲。
+
+v0.5.0 暂停继续开发 UI，保留 `/ui` 兼容入口，把重点放在基础能力和轻量观测：
+
+- `GET /healthz`：进程存活。
+- `GET /readyz`：代理池是否有可用代理。
+- `plugproxy watch`：轮询 `/metrics.json`，输出 pool/check/refresh 摘要。
+- `GET /metrics.json` 继续承载 pool、fetch、check、refresh、runtime 和运行配置摘要。
 
 控制台视觉基准：
 
@@ -335,6 +344,9 @@ v0.4.0 增加 `GET /metrics.json` 和 `GET /ui`。`/metrics.json` 是统一观�
 - 已增加 HTTP Transport 参数集中配置。
 - 已增加 atomic cache write。
 - 已增加 `run` signal graceful shutdown、`shutdown-timeout`、`log-level` 和 `log-format`。
+- 已增加主配置 `plugproxy.config.json`，固定 CLI > 主配置 > 默认值。
+- 已增加 sources 管理命令和 cache 维护命令。
+- 已增加 `/healthz`、`/readyz` 和 `plugproxy watch`。
 
 ### P1：稳定高并发
 

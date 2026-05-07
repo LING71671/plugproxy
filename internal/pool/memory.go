@@ -1,6 +1,8 @@
 package pool
 
 import (
+	"fmt"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
@@ -9,12 +11,19 @@ import (
 )
 
 type MemoryPool struct {
-	mu      sync.RWMutex
-	proxies map[string]model.Proxy
+	mu          sync.RWMutex
+	proxies     map[string]model.Proxy
+	roundRobin  map[string]int
+	random      *rand.Rand
+	randomMutex sync.Mutex
 }
 
 func NewMemory() *MemoryPool {
-	return &MemoryPool{proxies: make(map[string]model.Proxy)}
+	return &MemoryPool{
+		proxies:    make(map[string]model.Proxy),
+		roundRobin: make(map[string]int),
+		random:     rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
 }
 
 func (p *MemoryPool) Add(proxy model.Proxy) {
@@ -70,6 +79,8 @@ func mergeProxy(existing model.Proxy, incoming model.Proxy, seen bool) model.Pro
 	if incoming.CheckCount > 0 || incoming.LastCheckedAt.After(existing.LastCheckedAt) {
 		incoming.LastSeenAt = existing.LastSeenAt
 		incoming.SeenCount = existing.SeenCount
+		incoming.LastUsedAt = existing.LastUsedAt
+		incoming.UseCount = existing.UseCount
 		return incoming
 	}
 	if existing.CheckCount == 0 {
@@ -83,6 +94,8 @@ func mergeProxy(existing model.Proxy, incoming model.Proxy, seen bool) model.Pro
 			incoming.LastSeenAt = existing.LastSeenAt
 			incoming.SeenCount = existing.SeenCount
 		}
+		incoming.LastUsedAt = existing.LastUsedAt
+		incoming.UseCount = existing.UseCount
 		return incoming
 	}
 
@@ -99,6 +112,8 @@ func mergeProxy(existing model.Proxy, incoming model.Proxy, seen bool) model.Pro
 	incoming.LastError = existing.LastError
 	incoming.LastSeenAt = existing.LastSeenAt
 	incoming.SeenCount = existing.SeenCount
+	incoming.LastUsedAt = existing.LastUsedAt
+	incoming.UseCount = existing.UseCount
 	if seen {
 		incoming.LastSeenAt = time.Now()
 		incoming.SeenCount++
@@ -110,47 +125,50 @@ func mergeProxy(existing model.Proxy, incoming model.Proxy, seen bool) model.Pro
 }
 
 func (p *MemoryPool) Get(strategy Strategy, filter Filter) (model.Proxy, bool) {
-	items := p.List(filter)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	items := p.filteredLocked(filter)
 	if len(items) == 0 {
 		return model.Proxy{}, false
 	}
 
+	p.sortForStrategy(items, strategy)
+
+	index := 0
 	switch strategy {
-	case StrategyFastest:
-		sort.SliceStable(items, func(i, j int) bool {
-			if healthRank(items[i]) != healthRank(items[j]) {
-				return healthRank(items[i]) > healthRank(items[j])
-			}
-			if items[i].Latency == 0 {
-				return false
-			}
-			if items[j].Latency == 0 {
-				return true
-			}
-			if items[i].Latency != items[j].Latency {
-				return items[i].Latency < items[j].Latency
-			}
-			return items[i].HealthScore > items[j].HealthScore
-		})
-	default:
-		sort.SliceStable(items, func(i, j int) bool {
-			if healthRank(items[i]) != healthRank(items[j]) {
-				return healthRank(items[i]) > healthRank(items[j])
-			}
-			if items[i].HealthScore != items[j].HealthScore {
-				return items[i].HealthScore > items[j].HealthScore
-			}
-			return items[i].CreatedAt.Before(items[j].CreatedAt)
-		})
+	case StrategyRandom:
+		index = p.randomIndex(len(items))
+	case StrategyRoundRobin:
+		key := filterKey(strategy, filter)
+		index = p.roundRobin[key] % len(items)
+		p.roundRobin[key] = (index + 1) % len(items)
 	}
 
-	return items[0], true
+	selected := items[index]
+	selected.LastUsedAt = time.Now()
+	selected.UseCount++
+	p.proxies[selected.ID] = selected
+	return selected, true
 }
 
 func (p *MemoryPool) List(filter Filter) []model.Proxy {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
+	items := p.filteredLocked(filter)
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		}
+		return items[i].ID < items[j].ID
+	})
+
+	return items
+}
+
+func (p *MemoryPool) filteredLocked(filter Filter) []model.Proxy {
 	items := make([]model.Proxy, 0, len(p.proxies))
 	for _, proxy := range p.proxies {
 		if filter.Protocol != "" && proxy.Protocol != filter.Protocol {
@@ -170,15 +188,85 @@ func (p *MemoryPool) List(filter Filter) []model.Proxy {
 		}
 		items = append(items, proxy)
 	}
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
-			return items[i].CreatedAt.Before(items[j].CreatedAt)
-		}
-		return items[i].ID < items[j].ID
-	})
-
 	return items
+}
+
+func (p *MemoryPool) sortForStrategy(items []model.Proxy, strategy Strategy) {
+	switch strategy {
+	case StrategyFastest:
+		sort.SliceStable(items, func(i, j int) bool {
+			if healthRank(items[i]) != healthRank(items[j]) {
+				return healthRank(items[i]) > healthRank(items[j])
+			}
+			if items[i].Latency == 0 {
+				return false
+			}
+			if items[j].Latency == 0 {
+				return true
+			}
+			if items[i].Latency != items[j].Latency {
+				return items[i].Latency < items[j].Latency
+			}
+			return tieBreak(items[i], items[j])
+		})
+	case StrategyLeastRecentlyUsed:
+		sort.SliceStable(items, func(i, j int) bool {
+			if healthRank(items[i]) != healthRank(items[j]) {
+				return healthRank(items[i]) > healthRank(items[j])
+			}
+			if items[i].LastUsedAt.IsZero() != items[j].LastUsedAt.IsZero() {
+				return items[i].LastUsedAt.IsZero()
+			}
+			if !items[i].LastUsedAt.Equal(items[j].LastUsedAt) {
+				return items[i].LastUsedAt.Before(items[j].LastUsedAt)
+			}
+			if items[i].UseCount != items[j].UseCount {
+				return items[i].UseCount < items[j].UseCount
+			}
+			return tieBreak(items[i], items[j])
+		})
+	case StrategyWeighted:
+		sort.SliceStable(items, func(i, j int) bool {
+			if weight(items[i]) != weight(items[j]) {
+				return weight(items[i]) > weight(items[j])
+			}
+			return tieBreak(items[i], items[j])
+		})
+	default:
+		sort.SliceStable(items, func(i, j int) bool {
+			if healthRank(items[i]) != healthRank(items[j]) {
+				return healthRank(items[i]) > healthRank(items[j])
+			}
+			return tieBreak(items[i], items[j])
+		})
+	}
+}
+
+func (p *MemoryPool) randomIndex(length int) int {
+	p.randomMutex.Lock()
+	defer p.randomMutex.Unlock()
+	return p.random.Intn(length)
+}
+
+func tieBreak(left model.Proxy, right model.Proxy) bool {
+	if left.HealthScore != right.HealthScore {
+		return left.HealthScore > right.HealthScore
+	}
+	if left.SeenCount != right.SeenCount {
+		return left.SeenCount > right.SeenCount
+	}
+	if !left.CreatedAt.Equal(right.CreatedAt) {
+		return left.CreatedAt.Before(right.CreatedAt)
+	}
+	return left.ID < right.ID
+}
+
+func weight(proxy model.Proxy) int {
+	return healthRank(proxy)*1000 + proxy.HealthScore*10 + proxy.SeenCount*5 - proxy.UseCount*20
+}
+
+func filterKey(strategy Strategy, filter Filter) string {
+	return fmt.Sprintf("%s|%s|%t|%s|%s|%t", strategy, filter.Protocol, filter.Healthy, filter.Status, filter.Source, filter.ExcludeDead)
 }
 
 func healthRank(proxy model.Proxy) int {

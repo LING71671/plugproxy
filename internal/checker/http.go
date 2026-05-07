@@ -3,9 +3,11 @@ package checker
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/LING71671/plugproxy/internal/errtype"
@@ -14,9 +16,11 @@ import (
 )
 
 type HTTPChecker struct {
-	TargetURL string
-	Timeout   time.Duration
-	Transport TransportOptions
+	TargetURL    string
+	TargetURLs   []string
+	BodyContains string
+	Timeout      time.Duration
+	Transport    TransportOptions
 }
 
 type TransportOptions struct {
@@ -40,7 +44,7 @@ func NewHTTPWithOptions(targetURL string, timeout time.Duration, transport Trans
 		timeout = 8 * time.Second
 	}
 
-	return HTTPChecker{TargetURL: targetURL, Timeout: timeout, Transport: transport.WithDefaults()}
+	return HTTPChecker{TargetURL: targetURL, TargetURLs: []string{targetURL}, Timeout: timeout, Transport: transport.WithDefaults()}
 }
 
 func (o TransportOptions) WithDefaults() TransportOptions {
@@ -91,25 +95,7 @@ func (c HTTPChecker) checkHTTPProxy(ctx context.Context, proxy model.Proxy) Resu
 		Transport: c.newTransport(proxyURL),
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.TargetURL, nil)
-	if err != nil {
-		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ParseError}
-	}
-
-	start := time.Now()
-	resp, err := client.Do(req)
-	latency := time.Since(start)
-	if err != nil {
-		return Result{Proxy: proxy, Latency: latency, Error: err, ErrorType: errtype.Classify(err)}
-	}
-	defer resp.Body.Close()
-
-	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
-	if !ok {
-		err := fmt.Errorf("target returned %s", resp.Status)
-		return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.ResponseError}
-	}
-	return Result{Proxy: proxy, OK: true, Latency: latency}
+	return c.checkTargets(ctx, proxy, client)
 }
 
 func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Result {
@@ -123,7 +109,31 @@ func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Re
 		Transport: c.newSOCKSTransport(dialer),
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.TargetURL, nil)
+	return c.checkTargets(ctx, proxy, client)
+}
+
+func (c HTTPChecker) checkTargets(ctx context.Context, proxy model.Proxy, client *http.Client) Result {
+	targets := c.targets()
+	var last Result
+	for _, target := range targets {
+		result := c.checkOneTarget(ctx, proxy, client, target)
+		if result.OK {
+			return result
+		}
+		last = result
+		if ctx.Err() != nil {
+			return last
+		}
+	}
+	if last.Error == nil {
+		err := fmt.Errorf("no check target configured")
+		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ParseError}
+	}
+	return last
+}
+
+func (c HTTPChecker) checkOneTarget(ctx context.Context, proxy model.Proxy, client *http.Client, target string) Result {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return Result{Proxy: proxy, Error: err, ErrorType: errtype.ParseError}
 	}
@@ -136,12 +146,43 @@ func (c HTTPChecker) checkSOCKS5Proxy(ctx context.Context, proxy model.Proxy) Re
 	}
 	defer resp.Body.Close()
 
-	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
-	if !ok {
-		err := fmt.Errorf("target returned %s", resp.Status)
-		return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.ResponseError}
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		err := fmt.Errorf("target %s returned %s", target, resp.Status)
+		return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.HTTPStatus}
+	}
+	if c.BodyContains != "" {
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.TargetError}
+		}
+		if !strings.Contains(string(body), c.BodyContains) {
+			err := fmt.Errorf("target %s body did not contain %q", target, c.BodyContains)
+			return Result{Proxy: proxy, OK: false, Latency: latency, Error: err, ErrorType: errtype.TargetError}
+		}
 	}
 	return Result{Proxy: proxy, OK: true, Latency: latency}
+}
+
+func (c HTTPChecker) targets() []string {
+	targets := make([]string, 0, len(c.TargetURLs)+1)
+	seen := make(map[string]struct{})
+	for _, target := range c.TargetURLs {
+		if target == "" {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		targets = append(targets, target)
+	}
+	if len(targets) == 0 && c.TargetURL != "" {
+		targets = append(targets, c.TargetURL)
+	}
+	if len(targets) == 0 {
+		targets = append(targets, "https://httpbin.org/ip")
+	}
+	return targets
 }
 
 func (c HTTPChecker) newTransport(proxyURL *url.URL) *http.Transport {

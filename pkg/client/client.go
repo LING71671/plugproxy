@@ -147,6 +147,22 @@ func (c *Client) CancelRefresh(ctx context.Context) (map[string]any, error) {
 	return value, nil
 }
 
+func (c *Client) Health(ctx context.Context) (map[string]any, error) {
+	var value map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/healthz", nil, nil, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func (c *Client) Ready(ctx context.Context) (map[string]any, error) {
+	var value map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/readyz", nil, nil, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 func listValues(options ListOptions) url.Values {
 	values := url.Values{}
 	if options.Protocol != "" {

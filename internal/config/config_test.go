@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/LING71671/plugproxy/internal/source"
 )
@@ -23,6 +24,51 @@ func TestBuildSourcesSkipsDisabled(t *testing.T) {
 	}
 	if sources[0].Name() != "on" {
 		t.Fatalf("expected enabled source, got %s", sources[0].Name())
+	}
+}
+
+func TestAppConfigDefaultsAndRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plugproxy.config.json")
+	cfg := DefaultAppConfig()
+	cfg.Server.Addr = "127.0.0.1:9999"
+	cfg.Check.TargetURLs = []string{"http://example.test/ok"}
+
+	if err := SaveApp(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadApp(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Server.Addr != "127.0.0.1:9999" || loaded.Check.TargetURLs[0] != "http://example.test/ok" {
+		t.Fatalf("unexpected loaded app config %#v", loaded)
+	}
+	if loaded.Fetch.SourceWorkers == 0 || loaded.Cache.Fallback == nil || !*loaded.Cache.Fallback {
+		t.Fatalf("expected defaults to be filled, got %#v", loaded)
+	}
+}
+
+func TestValidateAppRejectsBadDuration(t *testing.T) {
+	cfg := DefaultAppConfig()
+	cfg.Check.Timeout = "not-a-duration"
+	if err := ValidateApp(cfg); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestDurationAndBoolHelpers(t *testing.T) {
+	if Duration("2s", time.Second) != 2*time.Second {
+		t.Fatal("expected parsed duration")
+	}
+	if Duration("bad", time.Second) != time.Second {
+		t.Fatal("expected fallback duration")
+	}
+	value := false
+	if Bool(&value, true) {
+		t.Fatal("expected explicit false")
+	}
+	if !Bool(nil, true) {
+		t.Fatal("expected fallback true")
 	}
 }
 

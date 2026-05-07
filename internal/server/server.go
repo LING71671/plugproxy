@@ -53,6 +53,8 @@ func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /health", s.health)
+	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /metrics.json", s.getMetrics)
 	mux.Handle("GET /ui", http.RedirectHandler("/ui/", http.StatusMovedPermanently))
 	mux.Handle("GET /ui/", http.StripPrefix("/ui/", web.Handler()))
@@ -76,7 +78,7 @@ func (s Server) index(w http.ResponseWriter, r *http.Request) {
 
 func (s Server) cancelRefresh(w http.ResponseWriter, _ *http.Request) {
 	if s.refreshCancel == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "refresh cancel is not configured"})
+		writeError(w, http.StatusNotFound, "not_configured", "refresh cancel is not configured")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.refreshCancel())
@@ -84,6 +86,15 @@ func (s Server) cancelRefresh(w http.ResponseWriter, _ *http.Request) {
 
 func (s Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s Server) ready(w http.ResponseWriter, _ *http.Request) {
+	usable := s.pool.List(pool.Filter{ExcludeDead: true})
+	if len(usable) == 0 {
+		writeError(w, http.StatusServiceUnavailable, "no_proxy_available", "no usable proxy available")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "usable": len(usable)})
 }
 
 func (s Server) listProxies(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +137,7 @@ func (s Server) getRefresh(w http.ResponseWriter, _ *http.Request) {
 
 func (s Server) postRefresh(w http.ResponseWriter, r *http.Request) {
 	if s.refresh == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "refresh is not configured"})
+		writeError(w, http.StatusNotFound, "not_configured", "refresh is not configured")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.refresh(context.WithoutCancel(r.Context())))
@@ -148,7 +159,7 @@ func (s Server) getProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	proxy, ok := s.pool.Get(strategy, filter)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no proxy available"})
+		writeError(w, http.StatusNotFound, "no_proxy_available", "no proxy available")
 		return
 	}
 
@@ -185,4 +196,12 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, errorType string, message string) {
+	writeJSON(w, status, map[string]string{
+		"error":      errorType,
+		"error_type": errorType,
+		"message":    message,
+	})
 }

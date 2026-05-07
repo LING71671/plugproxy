@@ -43,12 +43,14 @@
 - 增加 v0.2.1 稳定性版本，收口 smart check scheduler、source 冷却、host 限流、错误分类、refresh 可观测和 discover 配置导出。
 - 增加 v0.3.0 工程基础版本，收口 atomic cache write、HTTP Transport 配置、refresh cancel、优雅关闭和日志配置。
 - 增加 v0.4.0 观测与控制台版本，提供 `/metrics.json` 和嵌入式 Svelte Console。
+- 增加 v0.5.0 Core Foundation，收口代理使用语义、检测 fallback target、主配置、sources/cache 管理命令、`/healthz`、`/readyz` 和 `watch`。
 
 ## 第五阶段：管理与可视化
 
 - 增加可选轻量持久化。
-- 增加嵌入式管理面板。
-- 支持代理源启停、代理状态查看、手动刷新和检测。
+- 嵌入式管理面板已保留入口，v0.5.0 暂停继续开发 UI。
+- 已支持 sources 基础启停、增删、验证和导出。
+- 后续再做更完整的代理状态查看、手动检测和可视化运营面板。
 
 ## 横向主题：并发能力
 
@@ -58,6 +60,7 @@
 - 已增强 refresh 状态，暴露阶段、进度、耗时和取消状态。
 - 已对源抓取和检测错误分类，区分超时、连接错误、协议不支持和响应异常。
 - 已支持 `discover validate -write-sources` 导出待人工确认的源配置。
-- 后续继续推进 source 半开试探、全局连接预算、SOCKS4 真检测、metrics 和 sources 管理命令。
+- 已增加 v0.5.0 sources/cache/watch 基础管理命令。
+- 后续继续推进 source 半开试探、全局连接预算、SOCKS4 真检测和更细运行指标。
 
 详细设计见 [并发能力设计备忘](concurrency.md)。

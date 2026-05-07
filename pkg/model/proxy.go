@@ -42,6 +42,8 @@ type Proxy struct {
 	LastError           string        `json:"last_error,omitempty"`
 	LastSeenAt          time.Time     `json:"last_seen_at,omitempty"`
 	SeenCount           int           `json:"seen_count,omitempty"`
+	LastUsedAt          time.Time     `json:"last_used_at,omitempty"`
+	UseCount            int           `json:"use_count,omitempty"`
 	SourceIndex         int           `json:"source_index,omitempty"`
 	SourceTotal         int           `json:"source_total,omitempty"`
 	CreatedAt           time.Time     `json:"created_at"`

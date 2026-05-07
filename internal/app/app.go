@@ -48,6 +48,8 @@ type FetchOptions struct {
 type CheckOptions struct {
 	Workers          int
 	TargetURL        string
+	TargetURLs       []string
+	BodyContains     string
 	Timeout          time.Duration
 	Filter           pool.Filter
 	CachePath        string
@@ -319,7 +321,7 @@ func (a *App) FetchCheckWithOptions(ctx context.Context, fetchOptions FetchOptio
 	checkJobs := make(chan model.Proxy, max(1, checkOptions.Workers*4))
 	checkResults := make(chan checker.Result, max(1, checkOptions.Workers*4))
 	var checkWG sync.WaitGroup
-	httpChecker := checker.NewHTTPWithOptions(checkOptions.TargetURL, checkOptions.Timeout, checkOptions.Transport)
+	httpChecker := newHTTPChecker(checkOptions)
 	for range checkOptions.Workers {
 		checkWG.Add(1)
 		go func() {
@@ -534,7 +536,7 @@ func (a *App) CheckWithOptions(ctx context.Context, options CheckOptions) CheckS
 
 	items := a.pool.List(options.Filter)
 	schedule := scheduler.ScheduleChecks(items, schedulerOptions(options, options.MaxChecks))
-	stats := a.checkItems(ctx, schedule.Selected, options.Workers, options.TargetURL, options.Timeout, options.Transport)
+	stats := a.checkItemsWithOptions(ctx, schedule.Selected, options)
 	mergeScheduleStats(&stats, schedule.Stats, false)
 	if options.CacheWrite {
 		if options.CachePath == "" {
@@ -586,9 +588,17 @@ func (a *App) CheckWithFilter(ctx context.Context, workers int, targetURL string
 }
 
 func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, targetURL string, timeout time.Duration, transport checker.TransportOptions) CheckStats {
+	return a.checkItemsWithOptions(ctx, items, CheckOptions{Workers: workers, TargetURL: targetURL, Timeout: timeout, Transport: transport})
+}
+
+func (a *App) checkItemsWithOptions(ctx context.Context, items []model.Proxy, options CheckOptions) CheckStats {
+	workers := options.Workers
+	if workers <= 0 {
+		workers = 32
+	}
 	jobs := make(chan model.Proxy)
 	results := make(chan checker.Result)
-	httpChecker := checker.NewHTTPWithOptions(targetURL, timeout, transport)
+	httpChecker := newHTTPChecker(options)
 
 	var wg sync.WaitGroup
 	for range workers {
@@ -644,6 +654,17 @@ func (a *App) checkItems(ctx context.Context, items []model.Proxy, workers int, 
 	}
 
 	return stats
+}
+
+func newHTTPChecker(options CheckOptions) checker.HTTPChecker {
+	httpChecker := checker.NewHTTPWithOptions(options.TargetURL, options.Timeout, options.Transport)
+	if len(options.TargetURLs) > 0 {
+		httpChecker.TargetURLs = options.TargetURLs
+	}
+	if options.BodyContains != "" {
+		httpChecker.BodyContains = options.BodyContains
+	}
+	return httpChecker
 }
 
 func addErrorType(stats *CheckStats, kind errtype.Type) {

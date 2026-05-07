@@ -123,6 +123,48 @@ func TestMetricsAndUIEndpoints(t *testing.T) {
 	}
 }
 
+func TestHealthzAndReadyzEndpoints(t *testing.T) {
+	proxyPool := pool.NewMemory()
+	srv := New(proxyPool, slog.Default())
+	server := httptest.NewServer(srv.Handler())
+	defer server.Close()
+
+	healthResp, err := http.Get(server.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer healthResp.Body.Close()
+	if healthResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected healthz 200, got %d", healthResp.StatusCode)
+	}
+
+	notReadyResp, err := http.Get(server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer notReadyResp.Body.Close()
+	if notReadyResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected readyz 503 without proxies, got %d", notReadyResp.StatusCode)
+	}
+	var errBody map[string]string
+	if err := json.NewDecoder(notReadyResp.Body).Decode(&errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody["error_type"] != "no_proxy_available" {
+		t.Fatalf("expected unified error response, got %#v", errBody)
+	}
+
+	proxyPool.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDegraded})
+	readyResp, err := http.Get(server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readyResp.Body.Close()
+	if readyResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected readyz 200, got %d", readyResp.StatusCode)
+	}
+}
+
 func TestListProxiesFiltersAndPaginates(t *testing.T) {
 	proxyPool := pool.NewMemory()
 	proxyPool.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, Source: "one", HealthStatus: model.HealthHealthy})
