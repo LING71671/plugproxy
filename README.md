@@ -2,7 +2,7 @@
 
 plugproxy 是一个轻量的代理采集、检测和代理池服务。它可以从公开代理源抓取代理，做并发检测，给代理打健康状态，然后通过 CLI、HTTP API 或 Go SDK 给其他程序取用。
 
-> 当前版本：v0.5.0 Core Foundation。
+> 当前版本：v0.5.1 Core Foundation。
 > 这一版重点收口基础能力：主配置、源管理、cache 维护、健康 API、检测调度、动态刷新和轻量观测。
 
 ## 适合谁
@@ -255,7 +255,7 @@ POST /refresh/cancel
 GET  /metrics.json
 ```
 
-`/ui` 入口仍保留，但 v0.5.0 暂停继续开发管理面板，当前优先使用 CLI、HTTP API 和 `/metrics.json`。
+`/ui` 入口仍保留，但 v0.5.x 暂停继续开发管理面板，当前优先使用 CLI、HTTP API 和 `/metrics.json`。
 
 ## Go SDK
 

@@ -45,11 +45,12 @@
 - 增加 v0.3.0 工程基础版本，收口 atomic cache write、HTTP Transport 配置、refresh cancel、优雅关闭和日志配置。
 - 增加 v0.4.0 观测版本，提供 `/metrics.json` 和实验性嵌入式 UI 入口。
 - 增加 v0.5.0 Core Foundation，收口代理使用语义、检测 fallback target、主配置、sources/cache 管理命令、`/healthz`、`/readyz` 和 `watch`。
+- 增加 v0.5.1 文档与版本口径补丁，重写 README 上手路径并统一默认版本号。
 
 ## 第五阶段：管理与可视化
 
 - 增加可选轻量持久化。
-- 实验性嵌入式 UI 入口已保留，v0.5.0 暂停继续开发 UI。
+- 实验性嵌入式 UI 入口已保留，v0.5.x 暂停继续开发 UI。
 - 已支持 sources 基础启停、增删、验证和导出。
 - 后续再做更完整的代理状态查看、手动检测和可视化运营面板。
 

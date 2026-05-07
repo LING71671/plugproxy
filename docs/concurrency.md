@@ -296,7 +296,7 @@ V1 不做 source 级单独频率控制，不做 EWMA/AIMD，也不改变流水�
 
 `GET /metrics.json` 是统一观测数据面，暴露 pool、fetch、check、refresh、runtime 和运行配置摘要。
 
-v0.5.0 暂停继续开发 UI，保留 `/ui` 兼容入口，把重点放在基础能力和轻量观测：
+v0.5.x 暂停继续开发 UI，保留 `/ui` 兼容入口，把重点放在基础能力和轻量观测：
 
 - `GET /healthz`：进程存活。
 - `GET /readyz`：代理池是否有可用代理。
