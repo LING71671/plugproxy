@@ -207,7 +207,8 @@ func main() {
 		cachePath := fs.String("cache", cache.DefaultPath, "proxy cache path")
 		cacheFallback := fs.Bool("cache-fallback", true, "reuse proxy cache when all sources fail")
 		sourceWorkers := fs.Int("source-workers", 32, "number of concurrent source fetches")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false}))
+		excludeDead := fs.Bool("exclude-dead", false, "exclude dead proxies from the list output")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "exclude-dead": true}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
@@ -218,7 +219,7 @@ func main() {
 			CacheFallback: *cacheFallback,
 			CacheWrite:    true,
 		})
-		writeJSON(application.Pool().List(pool.Filter{}))
+		writeJSON(application.Pool().List(pool.Filter{ExcludeDead: *excludeDead}))
 	case "get":
 		fs := flag.NewFlagSet("get", flag.ExitOnError)
 		configPath := fs.String("config", config.DefaultPath, "source config path")
@@ -228,7 +229,8 @@ func main() {
 		strategy := fs.String("strategy", string(pool.StrategyAny), "selection strategy: any, fastest")
 		protocol := fs.String("protocol", "", "protocol filter: http, https, socks4, socks5")
 		healthy := fs.Bool("healthy", false, "only return healthy proxies")
-		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "strategy": false, "protocol": false, "healthy": true}))
+		excludeDead := fs.Bool("exclude-dead", true, "exclude dead proxies from selection")
+		_ = fs.Parse(reorderFlagArgs(os.Args[2:], map[string]bool{"config": false, "cache": false, "cache-fallback": true, "source-workers": false, "strategy": false, "protocol": false, "healthy": true, "exclude-dead": true}))
 		application, err := newApplication(log, *configPath)
 		if err != nil {
 			exitErr(err)
@@ -239,7 +241,7 @@ func main() {
 			CacheFallback: *cacheFallback,
 			CacheWrite:    true,
 		})
-		proxy, ok := application.Pool().Get(pool.Strategy(*strategy), pool.Filter{Protocol: model.Protocol(*protocol), Healthy: *healthy})
+		proxy, ok := application.Pool().Get(pool.Strategy(*strategy), pool.Filter{Protocol: model.Protocol(*protocol), Healthy: *healthy, ExcludeDead: *excludeDead})
 		if !ok {
 			fmt.Fprintln(os.Stderr, "no proxy available")
 			os.Exit(1)
@@ -439,8 +441,8 @@ Usage:
   plugproxy doctor [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-api http://127.0.0.1:8899] [-source-check=false]
   plugproxy fetch [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m]
   plugproxy check [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-workers 32] [-protocol http] [-target URL] [-timeout 8s] [-max-checks 0] [-check-profile full] [-source-fair=false] [-tail-biased=false] [-connect-timeout 5s]
-  plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32]
-  plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true]
+  plugproxy list [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-exclude-dead=false]
+  plugproxy get [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-strategy fastest] [-protocol http] [-healthy=true] [-exclude-dead=true]
   plugproxy stats [-cache .plugproxy.cache.json] [-fetch=false]
   plugproxy run [-config plugproxy.sources.json] [-cache .plugproxy.cache.json] [-source-workers 32] [-per-host-workers 4] [-source-cooldown 15m] [-addr 127.0.0.1:8899] [-skip-check=true] [-refresh=true] [-refresh-interval 5m] [-refresh-min-interval 30s] [-refresh-max-interval 30m] [-refresh-jitter 10s] [-min-healthy 1] [-min-healthy-ratio 0] [-unchecked-threshold 100] [-max-checks 0] [-check-profile smart] [-source-fair=true] [-tail-biased=true] [-shutdown-timeout 10s] [-log-level info] [-log-format text]
   plugproxy discover repo owner/name

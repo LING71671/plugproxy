@@ -150,3 +150,51 @@ func TestListProxiesFiltersAndPaginates(t *testing.T) {
 		t.Fatalf("expected b:1, got %s", proxies[0].Address)
 	}
 }
+
+func TestGetProxyExcludesDeadByDefault(t *testing.T) {
+	proxyPool := pool.NewMemory()
+	proxyPool.Add(model.Proxy{ID: "http://dead:1", Address: "dead:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDead})
+	proxyPool.Add(model.Proxy{ID: "http://degraded:1", Address: "degraded:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDegraded})
+	srv := New(proxyPool, slog.Default())
+
+	server := httptest.NewServer(srv.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/proxy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var proxy model.Proxy
+	if err := json.NewDecoder(resp.Body).Decode(&proxy); err != nil {
+		t.Fatal(err)
+	}
+	if proxy.Address != "degraded:1" {
+		t.Fatalf("expected degraded proxy, got %#v", proxy)
+	}
+}
+
+func TestListProxiesCanExcludeDead(t *testing.T) {
+	proxyPool := pool.NewMemory()
+	proxyPool.Add(model.Proxy{ID: "http://dead:1", Address: "dead:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDead})
+	proxyPool.Add(model.Proxy{ID: "http://degraded:1", Address: "degraded:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDegraded})
+	srv := New(proxyPool, slog.Default())
+
+	server := httptest.NewServer(srv.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/proxies?exclude_dead=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var proxies []model.Proxy
+	if err := json.NewDecoder(resp.Body).Decode(&proxies); err != nil {
+		t.Fatal(err)
+	}
+	if len(proxies) != 1 || proxies[0].Address != "degraded:1" {
+		t.Fatalf("expected degraded proxy only, got %#v", proxies)
+	}
+}

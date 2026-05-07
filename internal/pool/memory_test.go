@@ -115,3 +115,17 @@ func TestMemoryPoolListFiltersStatusAndSource(t *testing.T) {
 		t.Fatalf("expected a:1, got %s", items[0].Address)
 	}
 }
+
+func TestMemoryPoolExcludeDeadFilter(t *testing.T) {
+	p := NewMemory()
+	p.Add(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDegraded})
+	p.Add(model.Proxy{ID: "http://b:1", Address: "b:1", Protocol: model.ProtocolHTTP, HealthStatus: model.HealthDead})
+
+	items := p.List(Filter{ExcludeDead: true})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 non-dead proxy, got %d", len(items))
+	}
+	if items[0].Address != "a:1" {
+		t.Fatalf("expected a:1, got %s", items[0].Address)
+	}
+}

@@ -26,18 +26,20 @@ type Options struct {
 }
 
 type GetProxyOptions struct {
-	Strategy string
-	Protocol model.Protocol
-	Healthy  bool
+	Strategy    string
+	Protocol    model.Protocol
+	Healthy     bool
+	ExcludeDead bool
 }
 
 type ListOptions struct {
-	Protocol model.Protocol
-	Healthy  bool
-	Status   model.HealthStatus
-	Source   string
-	Limit    int
-	Offset   int
+	Protocol    model.Protocol
+	Healthy     bool
+	Status      model.HealthStatus
+	Source      string
+	ExcludeDead bool
+	Limit       int
+	Offset      int
 }
 
 type Error struct {
@@ -76,6 +78,9 @@ func (c *Client) GetProxy(ctx context.Context, options GetProxyOptions) (model.P
 	}
 	if options.Healthy {
 		values.Set("healthy", "true")
+	}
+	if options.ExcludeDead {
+		values.Set("exclude_dead", "true")
 	}
 
 	var proxy model.Proxy
@@ -155,6 +160,9 @@ func listValues(options ListOptions) url.Values {
 	}
 	if options.Source != "" {
 		values.Set("source", options.Source)
+	}
+	if options.ExcludeDead {
+		values.Set("exclude_dead", "true")
 	}
 	if options.Limit > 0 {
 		values.Set("limit", fmt.Sprint(options.Limit))

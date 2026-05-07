@@ -160,6 +160,8 @@ GET /proxy?strategy=fastest&protocol=http&healthy=true
 
 `check` 和 `run` 支持检测调度：`-max-checks` 可限制单轮检测数量，`-check-profile smart` 会按健康状态分层复检、跳过 SOCKS4 unsupported、对死亡代理退避，并在有限预算下按协议和 source 公平抽样。`-tail-biased` 会在每个源内部优先抽取靠后的代理，用于验证“尾部是否更健康”的假设。`check` 默认 `full` 保持兼容；`run/refresh` 默认 `smart`，适合长期服务模式。高并发检测还可以通过 `-connect-timeout`、`-tls-handshake-timeout`、`-response-header-timeout`、`-idle-conn-timeout`、`-max-idle-conns` 和 `-max-idle-conns-per-host` 控制 HTTP Transport 行为。
 
+取用代理时按 `healthy -> degraded -> unchecked` 排序，`dead` 默认不作为可用代理返回：`plugproxy get` 和 HTTP `/proxy` 默认启用 `exclude_dead`。`list` 仍默认展示全量，方便诊断；需要列出可用候选时可加 `-exclude-dead=true` 或 `/proxies?exclude_dead=true`。
+
 ## 代理源配置
 
 默认会读取 `plugproxy.sources.json`。如果文件不存在，plugproxy 会启用内置的第一批高优先级 Raw/API TXT 源。

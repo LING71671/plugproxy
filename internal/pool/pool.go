@@ -10,10 +10,11 @@ const (
 )
 
 type Filter struct {
-	Protocol model.Protocol
-	Healthy  bool
-	Status   model.HealthStatus
-	Source   string
+	Protocol    model.Protocol
+	Healthy     bool
+	Status      model.HealthStatus
+	Source      string
+	ExcludeDead bool
 }
 
 type Pool interface {

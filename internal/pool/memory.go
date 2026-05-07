@@ -165,6 +165,9 @@ func (p *MemoryPool) List(filter Filter) []model.Proxy {
 		if filter.Healthy && !proxy.Healthy() {
 			continue
 		}
+		if filter.ExcludeDead && proxy.Status() == model.HealthDead {
+			continue
+		}
 		items = append(items, proxy)
 	}
 

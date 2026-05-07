@@ -142,7 +142,11 @@ func (s Server) getProxy(w http.ResponseWriter, r *http.Request) {
 		strategy = pool.StrategyAny
 	}
 
-	proxy, ok := s.pool.Get(strategy, parseFilter(r))
+	filter := parseFilter(r)
+	if r.URL.Query().Get("exclude_dead") == "" && filter.Status == "" && !filter.Healthy {
+		filter.ExcludeDead = true
+	}
+	proxy, ok := s.pool.Get(strategy, filter)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no proxy available"})
 		return
@@ -153,10 +157,11 @@ func (s Server) getProxy(w http.ResponseWriter, r *http.Request) {
 
 func parseFilter(r *http.Request) pool.Filter {
 	filter := pool.Filter{
-		Protocol: model.Protocol(r.URL.Query().Get("protocol")),
-		Healthy:  r.URL.Query().Get("healthy") == "true",
-		Status:   model.HealthStatus(r.URL.Query().Get("status")),
-		Source:   r.URL.Query().Get("source"),
+		Protocol:    model.Protocol(r.URL.Query().Get("protocol")),
+		Healthy:     r.URL.Query().Get("healthy") == "true",
+		Status:      model.HealthStatus(r.URL.Query().Get("status")),
+		Source:      r.URL.Query().Get("source"),
+		ExcludeDead: r.URL.Query().Get("exclude_dead") == "true",
 	}
 	if filter.Healthy && filter.Status == "" {
 		filter.Status = model.HealthHealthy

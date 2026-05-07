@@ -25,14 +25,18 @@ func TestClientGetProxyBuildsQuery(t *testing.T) {
 		if r.URL.Query().Get("healthy") != "true" {
 			t.Fatalf("missing healthy query")
 		}
+		if r.URL.Query().Get("exclude_dead") != "true" {
+			t.Fatalf("missing exclude_dead query")
+		}
 		_ = json.NewEncoder(w).Encode(model.Proxy{ID: "http://a:1", Address: "a:1", Protocol: model.ProtocolHTTP})
 	}))
 	defer server.Close()
 
 	proxy, err := New(server.URL).GetProxy(context.Background(), GetProxyOptions{
-		Strategy: "fastest",
-		Protocol: model.ProtocolHTTP,
-		Healthy:  true,
+		Strategy:    "fastest",
+		Protocol:    model.ProtocolHTTP,
+		Healthy:     true,
+		ExcludeDead: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,15 +57,19 @@ func TestClientListProxiesBuildsQuery(t *testing.T) {
 		if r.URL.Query().Get("limit") != "10" || r.URL.Query().Get("offset") != "5" {
 			t.Fatalf("unexpected pagination %s", r.URL.RawQuery)
 		}
+		if r.URL.Query().Get("exclude_dead") != "true" {
+			t.Fatalf("missing exclude_dead query")
+		}
 		_ = json.NewEncoder(w).Encode([]model.Proxy{{ID: "http://a:1"}})
 	}))
 	defer server.Close()
 
 	proxies, err := New(server.URL).ListProxies(context.Background(), ListOptions{
-		Status: model.HealthHealthy,
-		Source: "one",
-		Limit:  10,
-		Offset: 5,
+		Status:      model.HealthHealthy,
+		Source:      "one",
+		ExcludeDead: true,
+		Limit:       10,
+		Offset:      5,
 	})
 	if err != nil {
 		t.Fatal(err)
