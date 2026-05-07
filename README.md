@@ -264,9 +264,11 @@ GET  /metrics.json
 ```text
 你是我的工程助手。请把 plugproxy 代理池集成到当前项目里。
 
-我的项目信息：
+plugproxy 项目信息：
 - plugproxy 项目地址：https://github.com/LING71671/plugproxy
 - plugproxy 最新发布页：https://github.com/LING71671/plugproxy/releases/latest
+
+目标业务项目信息：
 - 目标业务项目：当前目录
 - 目标项目启动命令：请先探测 package.json、pyproject.toml、requirements.txt、go.mod、Cargo.toml 或 README，不要猜。
 - 代理使用场景：当前项目里所有需要代理的外部 HTTP 请求、爬虫请求或第三方 API 请求。
