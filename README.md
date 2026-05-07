@@ -259,16 +259,17 @@ GET  /metrics.json
 
 ## 给 AI 助手的一键集成提示词
 
-如果你不熟悉代码，也可以把下面整段复制给你的 AI 编程助手，让它把 plugproxy 接进你的项目。使用前先把“我的项目 Git 地址”和“我的项目启动命令”改成你的真实信息；如果你已经在项目目录里，就把项目 Git 地址写成“当前目录”。
+如果你不熟悉代码，也可以把下面整段复制给你的 AI 编程助手，让它把 plugproxy 接进你的项目。提示词里已经写好 plugproxy 项目地址；默认假设 AI 当前就在你的业务项目根目录里。
 
 ```text
 你是我的工程助手。请把 plugproxy 代理池集成到当前项目里。
 
 我的项目信息：
-- 项目 Git 地址：<在这里粘贴你的项目 Git 地址；如果已经在项目目录里，写“当前目录”>
-- 项目目录名：<clone 后的目录名；不确定就让 AI 从 git 地址推断>
-- 项目启动命令：<例如 npm run dev / pnpm dev / python main.py / go run ./cmd/app；不确定就让 AI 探测>
-- 代理使用场景：<说明哪里需要代理，例如爬虫请求、第三方 API 请求、批量采集任务>
+- plugproxy 项目地址：https://github.com/LING71671/plugproxy
+- plugproxy 最新发布页：https://github.com/LING71671/plugproxy/releases/latest
+- 目标业务项目：当前目录
+- 目标项目启动命令：请先探测 package.json、pyproject.toml、requirements.txt、go.mod、Cargo.toml 或 README，不要猜。
+- 代理使用场景：当前项目里所有需要代理的外部 HTTP 请求、爬虫请求或第三方 API 请求。
 - 优先集成方式：HTTP API；如果当前项目是 Go，可以改用 Go SDK。
 
 目标：
@@ -281,11 +282,8 @@ GET  /metrics.json
 请按这个流程做：
 
 一、先确认工作目录和克隆状态
-- 如果“项目 Git 地址”写的是“当前目录”，先确认当前目录是不是目标项目根目录。
-- 如果“项目 Git 地址”是 URL，先执行：
-  git clone <项目 Git 地址>
-  cd <项目目录名>
-- 如果“项目 Git 地址”没有填写，不要猜；先向我索要项目 Git 地址。
+- 先运行 pwd、ls 和 git status，确认当前目录是不是目标业务项目根目录。
+- 如果当前目录不是业务项目根目录，先停止并问我要业务项目地址或正确目录。
 - 不要把 plugproxy 源码克隆到我的业务项目里面，除非我明确要求改 plugproxy 本身。
 - 如果只是使用 plugproxy，优先下载 Release 二进制；不要为了使用它而 vendor 整个仓库。
 
