@@ -921,6 +921,7 @@ func fileExists(path string) bool {
 
 func exitErr(err error) {
 	sentry.CaptureException(err)
+	sentry.Flush(2 * time.Second) // os.Exit skips deferred flushes
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }
