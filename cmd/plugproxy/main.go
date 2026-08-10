@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/LING71671/plugproxy/internal/app"
 	"github.com/LING71671/plugproxy/internal/cache"
 	"github.com/LING71671/plugproxy/internal/checker"
@@ -37,6 +38,11 @@ var (
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
+		_ = sentry.Init(sentry.ClientOptions{Dsn: dsn, TracesSampleRate: 0.1})
+		defer sentry.Flush(2 * time.Second)
+	}
 
 	if len(os.Args) < 2 {
 		usage()
@@ -914,6 +920,7 @@ func fileExists(path string) bool {
 }
 
 func exitErr(err error) {
+	sentry.CaptureException(err)
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }
