@@ -15,3 +15,6 @@ plugproxy.sources.json
 # Logs
 *.log
 
+
+# local secrets
+.env
